@@ -3,6 +3,7 @@ package org.example.tridotpnp
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CaptureRequest
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -24,7 +25,9 @@ import androidx.core.content.ContextCompat
 import android.os.Handler
 import android.os.Looper
 import androidx.annotation.OptIn
+import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
@@ -119,14 +122,23 @@ fun CameraPreview(
     LaunchedEffect(exposureCompensation) {
         camera?.let { cam ->
             val cameraControl = cam.cameraControl
+
+            // 先锁定AE
+            val camera2Control = Camera2CameraControl.from(cameraControl)
+            val lockRequest = CaptureRequestOptions.Builder()
+                .setCaptureRequestOption(CaptureRequest.CONTROL_AE_LOCK, true)
+                .setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                .build()
+            camera2Control.setCaptureRequestOptions(lockRequest)
+
+            // 再设置曝光补偿
             cameraControl.setExposureCompensationIndex(exposureCompensation)
+            android.util.Log.d("Camera", "AE locked with exposure: $exposureCompensation")
         }
     }
 
     DisposableEffect(Unit) {
-        onDispose {
-            cameraExecutor.shutdown()
-        }
+        onDispose { cameraExecutor.shutdown() }
     }
 
     // ---------- 分区树类型与函数（定义在 @Composable 作用域） ----------
@@ -139,7 +151,7 @@ fun CameraPreview(
         val verticalSplit: Boolean,
         val children: List<PlacedRect> = emptyList()
     ) {
-        fun contains(x: Float, y: Float) = x >= left && x <= right && y >= top && y <= bottom
+        fun contains(x: Float, y: Float) = x in left..right && y >= top && y <= bottom
     }
 
     fun buildPartitionTree(

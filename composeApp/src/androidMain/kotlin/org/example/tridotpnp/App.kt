@@ -57,9 +57,7 @@ import com.google.accompanist.permissions.shouldShowRationale
 @Composable
 @Preview
 fun App() {
-    MaterialTheme {
-        BrightSpotDetectionApp()
-    }
+    MaterialTheme { BrightSpotDetectionApp() }
 }
 
 @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)

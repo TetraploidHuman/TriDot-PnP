@@ -1,0 +1,1656 @@
+package org.example.tridotpnp
+
+import android.graphics.Bitmap
+import android.graphics.Matrix
+import android.hardware.camera2.CameraCharacteristics
+import androidx.camera.core.*
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
+import android.os.Handler
+import android.os.Looper
+import androidx.annotation.OptIn
+import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
+import androidx.core.graphics.scale
+
+@androidx.camera.camera2.interop.ExperimentalCamera2Interop
+@OptIn(ExperimentalCamera2Interop::class)
+@Composable
+fun CameraPreview(
+    modifier: Modifier = Modifier,
+    maxSpots: Int? = null,
+    exposureCompensation: Int = 0,
+    gridSize: Int = 50,
+    detector: BrightSpotDetector,  // 必须在工程中提供实现
+    enableRoiOptimization: Boolean = true,  // 是否启用ROI优化
+    onBrightSpotsDetected: (List<BrightSpot>, Pair<Int, Int>?) -> Unit = { _, _ -> },
+    onBitmapCaptured: (Bitmap) -> Unit = {},
+    onFpsUpdate: (Float) -> Unit = {},  // 帧率更新回调
+    // 分区参数（可调）
+    maxDepth: Int = 13,            // 分区树最大深度（更大值 -> 更细）
+    splitRatio: Float = 0.618f,   // 分割比例
+    minLeafSizePx: Int = 3,       // 叶子最小边长（像素）
+    maxDrawDepth: Int = 13         // 实际绘制的最大深度（<= maxDepth）
+) {
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    var brightSpots by remember { mutableStateOf<List<BrightSpot>>(emptyList()) }
+    var previewSize by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var camera by remember { mutableStateOf<Camera?>(null) }
+    var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
+
+    // 跟踪上一个三色点的三个位置（用于ROI优化）
+    var lastTriSpots by remember { mutableStateOf<Triple<Offset, Offset, Offset>?>(null) }
+    var lastTriSpotsImageSize by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+
+    // ROI可视化信息（原图坐标）
+    var roiVisualizationInfo by remember { mutableStateOf<RoiVisualizationInfo?>(null) }
+
+    // 手动选择的ROI区域（屏幕坐标）- 用于优先识别
+    var manualRoiStart by remember { mutableStateOf<Offset?>(null) }
+    var manualRoiEnd by remember { mutableStateOf<Offset?>(null) }
+    var manualRoiImageCoords by remember { mutableStateOf<ManualRoiCoords?>(null) } // left, top, right, bottom (图像坐标)
+    var isDragging by remember { mutableStateOf(false) }
+
+    // 限制识别区域（屏幕坐标）- 只在这个区域内识别
+    var limitRegionStart by remember { mutableStateOf<Offset?>(null) }
+    var limitRegionEnd by remember { mutableStateOf<Offset?>(null) }
+    var limitRegionImageCoords by remember { mutableStateOf<ManualRoiCoords?>(null) } // left, top, right, bottom (图像坐标)
+    var limitRegionScreenRect by remember { mutableStateOf<Rect?>(null) } // 限制区域的屏幕坐标Rect，用于判断触摸点是否在区域内
+    var isDraggingLimitRegion by remember { mutableStateOf(false) }
+    var isLongPressing by remember { mutableStateOf(false) } // 标记是否正在长按
+
+    val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
+    val mainHandler = remember { Handler(Looper.getMainLooper()) }
+
+    // 帧率计算相关 - 使用Atomic类型确保线程安全
+    val frameCount = remember { AtomicInteger(0) }
+    val lastFrameTime = remember { AtomicLong(System.nanoTime()) }
+
+    // 使用rememberUpdatedState确保闭包中始终使用最新的回调
+    val currentOnFpsUpdate = rememberUpdatedState(onFpsUpdate)
+
+    // 使用rememberUpdatedState确保闭包中始终使用最新的值
+    val currentMaxSpots = rememberUpdatedState(maxSpots)
+    val currentExposureCompensation = rememberUpdatedState(exposureCompensation)
+    val currentGridSize = rememberUpdatedState(gridSize)
+    val currentEnableRoiOptimization = rememberUpdatedState(enableRoiOptimization)
+    var skipFrames by remember { mutableIntStateOf(0) }
+    var lastModeIsRGB by remember { mutableStateOf(maxSpots == 3) }
+    // 模式切换时短暂丢帧，避免卡顿，并清除跟踪状态
+    LaunchedEffect(maxSpots) {
+        val nowIsRGB = maxSpots == 3
+        if (nowIsRGB != lastModeIsRGB) {
+            skipFrames = 3
+            lastModeIsRGB = nowIsRGB
+            // 清除跟踪状态，因为模式改变了
+            lastTriSpots = null
+            lastTriSpotsImageSize = null
+        }
+    }
+
+    // ROI优化关闭时清除跟踪状态和可视化信息
+    LaunchedEffect(enableRoiOptimization) {
+        if (!enableRoiOptimization) {
+            lastTriSpots = null
+            lastTriSpotsImageSize = null
+            roiVisualizationInfo = null
+        }
+    }
+
+    // 当曝光补偿改变时更新相机设置
+    LaunchedEffect(exposureCompensation) {
+        camera?.let { cam ->
+            val cameraControl = cam.cameraControl
+            cameraControl.setExposureCompensationIndex(exposureCompensation)
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            cameraExecutor.shutdown()
+        }
+    }
+
+    // ---------- 分区树类型与函数（定义在 @Composable 作用域） ----------
+    data class PlacedRect(
+        val left: Float,
+        val top: Float,
+        val right: Float,
+        val bottom: Float,
+        val depth: Int,
+        val verticalSplit: Boolean,
+        val children: List<PlacedRect> = emptyList()
+    ) {
+        fun contains(x: Float, y: Float) = x >= left && x <= right && y >= top && y <= bottom
+    }
+
+    fun buildPartitionTree(
+        l: Float, t: Float, r: Float, b: Float,
+        depth: Int,
+        maxDepthParam: Int,
+        splitRatioParam: Float,
+        minLeafSizePxParam: Int,
+        targetPoint: Offset? = null  // 目标点位置，用于决定分割方向
+    ): PlacedRect {
+        val w = r - l
+        val h = b - t
+        if (depth >= maxDepthParam || w <= minLeafSizePxParam || h <= minLeafSizePxParam) {
+            return PlacedRect(l, t, r, b, depth, verticalSplit = true, children = emptyList())
+        }
+        val vertical = w >= h
+        val baseRatio = splitRatioParam.coerceIn(0.2f, 0.8f)
+
+        // 根据目标点位置动态调整分割比例
+        val ratio = if (targetPoint != null) {
+            if (vertical) {
+                // 垂直分割：如果点在左边，让左边短（使用1-ratio）；如果点在右边，让右边短（使用ratio）
+                val pointX = targetPoint.x.coerceIn(l, r)
+                val relativeX = (pointX - l) / w  // 点在矩形中的相对位置 [0, 1]
+                if (relativeX < 0.5f) {
+                    // 点在左边，让左边短（使用较小的比例，比如1-ratio）
+                    1f - baseRatio
+                } else {
+                    // 点在右边，让右边短（使用较大的比例）
+                    baseRatio
+                }
+            } else {
+                // 水平分割：如果点在上边，让上边短（使用1-ratio）；如果点在下边，让下边短（使用ratio）
+                val pointY = targetPoint.y.coerceIn(t, b)
+                val relativeY = (pointY - t) / h  // 点在矩形中的相对位置 [0, 1]
+                if (relativeY < 0.5f) {
+                    // 点在上边，让上边短
+                    1f - baseRatio
+                } else {
+                    // 点在下边，让下边短
+                    baseRatio
+                }
+            }.coerceIn(0.2f, 0.8f)
+        } else {
+            baseRatio
+        }
+
+        return if (vertical) {
+            val cut = l + w * ratio
+            val leftRect = buildPartitionTree(l, t, cut, b, depth + 1, maxDepthParam, splitRatioParam, minLeafSizePxParam, targetPoint)
+            val rightRect = buildPartitionTree(cut, t, r, b, depth + 1, maxDepthParam, splitRatioParam, minLeafSizePxParam, targetPoint)
+            PlacedRect(l, t, r, b, depth, verticalSplit = true, children = listOf(leftRect, rightRect))
+        } else {
+            val cut = t + h * ratio
+            val topRect = buildPartitionTree(l, t, r, cut, depth + 1, maxDepthParam, splitRatioParam, minLeafSizePxParam, targetPoint)
+            val bottomRect = buildPartitionTree(l, cut, r, b, depth + 1, maxDepthParam, splitRatioParam, minLeafSizePxParam, targetPoint)
+            PlacedRect(l, t, r, b, depth, verticalSplit = false, children = listOf(topRect, bottomRect))
+        }
+    }
+
+    fun findPathToPoint(root: PlacedRect, x: Float, y: Float): List<PlacedRect> {
+        val path = mutableListOf<PlacedRect>()
+        var node: PlacedRect? = root
+        while (node != null) {
+            path.add(node)
+            if (node.children.isEmpty()) break
+            node = node.children.find { it.contains(x, y) }
+            if (node == null) break
+        }
+        return path
+    }
+
+    /**
+     * 查找ROI区域内与空间分割树相交的所有叶子节点（最小单位）
+     * @param root 分割树根节点
+     * @param roiLeft ROI左边界（原图坐标）
+     * @param roiTop ROI上边界（原图坐标）
+     * @param roiRight ROI右边界（原图坐标）
+     * @param roiBottom ROI下边界（原图坐标）
+     * @return ROI区域内的叶子节点列表
+     */
+    fun findLeafNodesInRoi(
+        root: PlacedRect,
+        roiLeft: Float,
+        roiTop: Float,
+        roiRight: Float,
+        roiBottom: Float
+    ): List<PlacedRect> {
+        val result = mutableListOf<PlacedRect>()
+
+        fun collectLeaves(node: PlacedRect) {
+            // 检查节点是否与ROI区域相交
+            if (node.right < roiLeft || node.left > roiRight ||
+                node.bottom < roiTop || node.top > roiBottom) {
+                return // 不相交，跳过
+            }
+
+            // 如果是叶子节点，添加到结果中
+            if (node.children.isEmpty()) {
+                result.add(node)
+                return
+            }
+
+            // 如果有子节点，递归检查子节点
+            node.children.forEach { child ->
+                collectLeaves(child)
+            }
+        }
+
+        collectLeaves(root)
+        return result
+    }
+
+    // 计算目标点位置（所有检测到的点的中心），用于动态调整分割方向
+    val targetPointForPartition = remember(brightSpots, previewSize) {
+        if (brightSpots.isNotEmpty() && previewSize != null) {
+            // 使用所有点的中心作为目标点
+            val centerX = brightSpots.map { it.position.x }.average().toFloat()
+            val centerY = brightSpots.map { it.position.y }.average().toFloat()
+            Offset(centerX, centerY)
+        } else {
+            null
+        }
+    }
+
+    // 在 previewSize 可用时，用 remember 缓存 rootRect（避免每帧重建）
+    // 现在根据目标点位置动态构建分区树，让短的一边朝向点
+    val rootRectCached = remember(previewSize, maxDepth, splitRatio, minLeafSizePx, targetPointForPartition) {
+        if (previewSize == null) null
+        else {
+            val (w, h) = previewSize!!
+            buildPartitionTree(0f, 0f, w.toFloat(), h.toFloat(), 0, maxDepth, splitRatio, minLeafSizePx, targetPointForPartition)
+        }
+    }
+
+    Box(modifier = modifier
+        .pointerInput(Unit) {
+            // 长按+拖动：创建限制识别区域
+            detectDragGesturesAfterLongPress(
+                onDragStart = { offset ->
+                    mainHandler.post {
+                        isLongPressing = true
+                        isDraggingLimitRegion = true
+                        limitRegionStart = offset
+                        limitRegionEnd = offset
+                        limitRegionImageCoords = null
+                    }
+                },
+                onDrag = { change, dragAmount ->
+                    change.consume()
+                    mainHandler.post {
+                        limitRegionEnd = change.position
+                    }
+                },
+                onDragEnd = {
+                    mainHandler.post {
+                        isDraggingLimitRegion = false
+                        isLongPressing = false
+                    }
+                }
+            )
+        }
+        .pointerInput(limitRegionScreenRect) {
+            // 普通拖动：创建优先识别区域（原有的manualRoi功能）
+            detectDragGestures(
+                onDragStart = { offset ->
+                    // 只有在没有长按拖动时才创建优先识别区域
+                    // 如果有限制区域，检查拖动起始点是否在限制区域内
+                    val allowDrag = if (limitRegionScreenRect != null) {
+                        limitRegionScreenRect!!.contains(offset)
+                    } else {
+                        true // 没有限制区域，允许拖动
+                    }
+
+                    mainHandler.post {
+                        if (!isDraggingLimitRegion && !isLongPressing && allowDrag) {
+                            isDragging = true
+                            manualRoiStart = offset
+                            manualRoiEnd = offset
+                            manualRoiImageCoords = null
+                        }
+                    }
+                },
+                onDrag = { change, dragAmount ->
+                    // 拖拽过程中更新结束点
+                    if (!isDraggingLimitRegion && !isLongPressing) {
+                        change.consume()
+                        mainHandler.post {
+                            manualRoiEnd = change.position
+                        }
+                    }
+                },
+                onDragEnd = {
+                    // 拖拽结束时，标记拖拽结束（在Canvas中计算图像坐标）
+                    mainHandler.post {
+                        isDragging = false
+                    }
+                }
+            )
+        }
+        .pointerInput(limitRegionImageCoords) {
+            // 单击：解除限制区域（仅在有限制区域时生效）
+            detectTapGestures(
+                onTap = { offset ->
+                    // 如果有限制区域，单击任意位置解除限制
+                    mainHandler.post {
+                        if (limitRegionImageCoords != null) {
+                            limitRegionStart = null
+                            limitRegionEnd = null
+                            limitRegionImageCoords = null
+                            limitRegionScreenRect = null // 清除屏幕坐标Rect
+                        }
+                    }
+                }
+            )
+        }
+    ) {
+        // 相机预览视图
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { ctx ->
+                val previewView = PreviewView(ctx)
+                // 使用不裁剪的缩放策略，便于一致的矩阵映射
+                previewView.scaleType = PreviewView.ScaleType.FIT_CENTER
+                previewViewRef = previewView
+
+                val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
+                cameraProviderFuture.addListener({
+                    val cameraProvider = cameraProviderFuture.get()
+
+                    // 预览用例
+                    val preview = Preview.Builder()
+                        .build()
+                        .also {
+                            it.setSurfaceProvider(previewView.surfaceProvider)
+                        }
+
+                    // 图像分析用例 - 用于检测亮点
+                    val imageAnalyzer = ImageAnalysis.Builder()
+                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                        .build()
+                        .also { analysis ->
+                            analysis.setAnalyzer(cameraExecutor) { imageProxy ->
+                                if (skipFrames > 0) {
+                                    skipFrames -= 1
+                                    imageProxy.close()
+                                } else {
+                                    // 计算帧率（线程安全）
+                                    val currentTime = System.nanoTime()
+                                    val count = frameCount.incrementAndGet()
+                                    val elapsedNs = currentTime - lastFrameTime.get()
+                                    // 每秒更新一次帧率
+                                    if (elapsedNs >= 1_000_000_000L) { // 1秒
+                                        val fps = count * 1_000_000_000f / elapsedNs
+                                        frameCount.set(0)
+                                        lastFrameTime.set(currentTime)
+                                        // 在主线程中通知UI更新帧率
+                                        mainHandler.post {
+                                            currentOnFpsUpdate.value(fps)
+                                        }
+                                    }
+
+                                    // 获取当前手动ROI坐标和限制区域坐标（通过原子引用或直接使用，因为这是主线程上下文）
+                                    val currentManualRoi = manualRoiImageCoords
+                                    val currentLimitRegion = limitRegionImageCoords
+
+
+                                    processImage(
+                                        imageProxy = imageProxy,
+                                        detector = detector,
+                                        maxSpots = currentMaxSpots.value,
+                                        gridSize = currentGridSize.value,
+                                        enableRoiOptimization = currentEnableRoiOptimization.value,
+                                        lastTriSpots = if (currentEnableRoiOptimization.value) lastTriSpots else null,
+                                        lastTriSpotsImageSize = if (currentEnableRoiOptimization.value) lastTriSpotsImageSize else null,
+                                        manualRoi = currentManualRoi,
+                                        limitRegion = currentLimitRegion,
+                                        onRoiInfo = { info ->
+                                            // 在主线程中更新ROI可视化信息
+                                            mainHandler.post {
+                                                roiVisualizationInfo = info
+                                            }
+                                        },
+                                        onSpotsDetected = { spots, size, foundInManualRoi ->
+                                            brightSpots = spots
+                                            previewSize = size
+
+                                            // 如果在手动ROI中找到三色点，清除手动ROI并隐藏显示框
+                                            if (foundInManualRoi && spots.size == 3 && currentMaxSpots.value == 3) {
+                                                mainHandler.post {
+                                                    manualRoiStart = null
+                                                    manualRoiEnd = null
+                                                    manualRoiImageCoords = null
+                                                }
+                                            }
+
+                                            // 仅在启用ROI优化时更新跟踪的三色点位置
+                                            if (currentEnableRoiOptimization.value) {
+                                                if (spots.size == 3 && currentMaxSpots.value == 3) {
+                                                    var redSpot: BrightSpot? = null
+                                                    var greenSpot: BrightSpot? = null
+                                                    var blueSpot: BrightSpot? = null
+                                                    spots.forEach { spot ->
+                                                        when (spot.color) {
+                                                            LedColor.RED -> redSpot = spot
+                                                            LedColor.GREEN -> greenSpot = spot
+                                                            LedColor.BLUE -> blueSpot = spot
+                                                            else -> {}
+                                                        }
+                                                    }
+                                                    if (redSpot != null && greenSpot != null && blueSpot != null) {
+                                                        // 存储三个点的位置
+                                                        lastTriSpots = Triple(
+                                                            redSpot.position,
+                                                            greenSpot.position,
+                                                            blueSpot.position
+                                                        )
+                                                        lastTriSpotsImageSize = size
+                                                    } else {
+                                                        // 如果找不到三个完整的颜色点，清除跟踪
+                                                        lastTriSpots = null
+                                                        lastTriSpotsImageSize = null
+                                                    }
+                                                } else {
+                                                    // 如果不是三色模式或未找到三个点，清除跟踪
+                                                    lastTriSpots = null
+                                                    lastTriSpotsImageSize = null
+                                                }
+                                            }
+                                            onBrightSpotsDetected(spots, size)
+                                        },
+                                        onBitmapCaptured = onBitmapCaptured
+                                    )
+                                    imageProxy.close()
+                                }
+                            }
+                        }
+
+                    // 选择后置摄像头
+                    val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+
+                    try {
+                        // 解绑所有用例
+                        cameraProvider.unbindAll()
+
+                        // 绑定用例到相机并获取Camera对象
+                        val cam = cameraProvider.bindToLifecycle(
+                            lifecycleOwner,
+                            cameraSelector,
+                            preview,
+                            imageAnalyzer
+                        )
+
+                        camera = cam
+                        val camera2Info = Camera2CameraInfo.from(cam.cameraInfo)
+                        val ranges = camera2Info.getCameraCharacteristic(
+                            CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES
+                        )
+
+                        android.util.Log.d("FPS", "AE_AVAILABLE_FPS_RANGES=${ranges?.joinToString()}")
+                        // 设置固定曝光
+                        val cameraControl = cam.cameraControl
+                        val cameraInfo = cam.cameraInfo
+
+                        // 获取曝光补偿范围
+                        val exposureState = cameraInfo.exposureState
+                        val minExposure = exposureState.exposureCompensationRange.lower
+                        val maxExposure = exposureState.exposureCompensationRange.upper
+
+                        // 设置初始曝光补偿
+                        cameraControl.setExposureCompensationIndex(currentExposureCompensation.value)
+
+                        // 启用AE锁定（如果支持）
+                        try {
+                            cameraControl.enableTorch(false) // 关闭闪光灯
+                        } catch (e: Exception) {
+                            // 某些设备不支持闪光灯控制
+                        }
+
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }, ContextCompat.getMainExecutor(ctx))
+
+                previewView
+            }
+        )
+
+        // 在预览视图上绘制亮点标记与分区指示线
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val pv = previewViewRef
+            if (previewSize != null && pv != null) {
+                val (imageWidth, imageHeight) = previewSize!!
+                // 构建从图像坐标到画布坐标的变换矩阵（匹配 FIT_CENTER 策略）
+                val scale = kotlin.math.min(size.width / imageWidth, size.height / imageHeight)
+                val dx = (size.width - imageWidth * scale) / 2f
+                val dy = (size.height - imageHeight * scale) / 2f
+                val transform = Matrix().apply {
+                    postScale(scale, scale)
+                    postTranslate(dx, dy)
+                }
+
+                // 使用缓存的分区树（已经基于 previewSize 构建或为 null）
+                // 如果缓存中没有，使用当前帧的brightSpots计算目标点
+                val currentTargetPoint = if (brightSpots.isNotEmpty()) {
+                    val centerX = brightSpots.map { it.position.x }.average().toFloat()
+                    val centerY = brightSpots.map { it.position.y }.average().toFloat()
+                    Offset(centerX, centerY)
+                } else {
+                    targetPointForPartition
+                }
+                val rootRect = rootRectCached ?: buildPartitionTree(
+                    0f, 0f, imageWidth.toFloat(), imageHeight.toFloat(), 0,
+                    maxDepth, splitRatio, minLeafSizePx, currentTargetPoint
+                )
+
+                // ---------- 优化：一次性查找三色点，避免重复查找 ----------
+                var triCenterImg: Offset? = null
+                var redSpot: BrightSpot? = null
+                var greenSpot: BrightSpot? = null
+                var blueSpot: BrightSpot? = null
+                if (brightSpots.size == 3) {
+                    brightSpots.forEach { spot ->
+                        when (spot.color) {
+                            LedColor.RED -> redSpot = spot
+                            LedColor.GREEN -> greenSpot = spot
+                            LedColor.BLUE -> blueSpot = spot
+                            else -> {}
+                        }
+                    }
+                    if (redSpot != null && greenSpot != null && blueSpot != null) {
+                        val cx = (redSpot.position.x + greenSpot.position.x + blueSpot.position.x) / 3f
+                        val cy = (redSpot.position.y + greenSpot.position.y + blueSpot.position.y) / 3f
+                        triCenterImg = Offset(cx, cy)
+                    }
+                }
+
+                data class DrawRectInfo(
+                    val node: PlacedRect,
+                    val strokeW: Float,
+                    val alpha: Float
+                )
+                fun collectPartitionRects(node: PlacedRect, rects: MutableList<DrawRectInfo>) {
+                    if (node.depth > maxDrawDepth) return
+                    val depthRatio = node.depth.toFloat() / maxDrawDepth.toFloat()
+                    val strokeW = (if (node.depth <= 2) 2.6f else (1f + (1f - depthRatio) * 1.6f)).coerceAtLeast(0.6f)
+                    val alpha = (0.14f + (1f - depthRatio) * 0.16f).coerceIn(0.06f, 0.7f)
+                    rects.add(DrawRectInfo(node, strokeW, alpha))
+                    node.children.forEach { collectPartitionRects(it, rects) }
+                }
+                val partitionRects = mutableListOf<DrawRectInfo>()
+                collectPartitionRects(rootRect, partitionRects)
+
+                // 批量绘制所有分区矩形
+                val pBuf = FloatArray(8) // 复用FloatArray，避免频繁分配
+//                val baseColor = Color(0xFF222222) // 预定义基础颜色
+//                partitionRects.forEach { info ->
+//                    pBuf[0] = info.node.left; pBuf[1] = info.node.top
+//                    pBuf[2] = info.node.right; pBuf[3] = info.node.top
+//                    pBuf[4] = info.node.right; pBuf[5] = info.node.bottom
+//                    pBuf[6] = info.node.left; pBuf[7] = info.node.bottom
+//                    transform.mapPoints(pBuf)
+//
+//                    // 使用drawRect的stroke替代4条drawLine（性能更好）
+//                    drawRect(
+//                        color = baseColor.copy(alpha = info.alpha),
+//                        topLeft = Offset(pBuf[0], pBuf[1]),
+//                        size = androidx.compose.ui.geometry.Size(pBuf[2] - pBuf[0], pBuf[5] - pBuf[1]),
+//                        style = Stroke(width = info.strokeW)
+//                    )
+//                } //灰色基准线，我觉得已经有了空间分割树可视化，就不需要这个了
+
+                // ---------- 优化：如果存在三色中心，则突出显示包含中心的路径 ----------
+                if (triCenterImg != null) {
+                    val path = findPathToPoint(rootRect, triCenterImg.x, triCenterImg.y)
+                    val filteredPath = path.filter { it.depth <= maxDrawDepth }
+                    if (filteredPath.isNotEmpty()) {
+                        val lastIdx = filteredPath.lastIndex
+                        filteredPath.forEachIndexed { idx, node ->
+                            pBuf[0] = node.left; pBuf[1] = node.top
+                            pBuf[2] = node.right; pBuf[3] = node.top
+                            pBuf[4] = node.right; pBuf[5] = node.bottom
+                            pBuf[6] = node.left; pBuf[7] = node.bottom
+                            transform.mapPoints(pBuf)
+
+//                            val depth = node.depth
+//                            val ratio = 1f - (depth.toFloat() / (maxDepth.toFloat() + 1f))
+//                            val strokeW = (6f * ratio).coerceIn(1f, 8f)
+                            val strokeW = 3f //此处使用等宽线段，如果需要随着深度增加而改变粗细，可启用上述代码
+                            val strokeCol = if (idx == lastIdx) {
+                                Color(0xFFFFFF00) // 复用颜色常量
+                            } else {
+                                //Color(0xFFFFCC33).copy(alpha = (0.95f - idx * 0.06f).coerceIn(0.2f, 0.98f))
+                                //Color(0xFFFFCC33)
+                                Color(0xFFAAF0FF).copy(alpha = (idx * 0.06f).coerceIn(0.6f, 0.98f))
+                            }
+
+                            drawRect(
+                                color = strokeCol,
+                                topLeft = Offset(pBuf[0], pBuf[1]),
+                                size = androidx.compose.ui.geometry.Size(pBuf[2] - pBuf[0], pBuf[5] - pBuf[1]),
+                                style = Stroke(width = strokeW)
+                            )
+
+                            // 若为叶子则填充
+                            if (node.children.isEmpty()) {
+                                drawRect(
+                                    color = Color(0xC99AF2FF),
+                                    topLeft = Offset(pBuf[0], pBuf[1]),
+                                    size = androidx.compose.ui.geometry.Size(pBuf[2] - pBuf[0], pBuf[5] - pBuf[1])
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // ---------- 优化：绘制三色点到中心的连线与中心点 ----------
+                if (brightSpots.size == 3 && triCenterImg != null && redSpot != null && greenSpot != null && blueSpot != null) {
+                    val pointBuf = FloatArray(2) // 用于单点变换
+                    pointBuf[0] = redSpot.position.x; pointBuf[1] = redSpot.position.y; transform.mapPoints(pointBuf); val redP = Offset(pointBuf[0], pointBuf[1])
+                    pointBuf[0] = greenSpot.position.x; pointBuf[1] = greenSpot.position.y; transform.mapPoints(pointBuf); val greenP = Offset(pointBuf[0], pointBuf[1])
+                    pointBuf[0] = blueSpot.position.x; pointBuf[1] = blueSpot.position.y; transform.mapPoints(pointBuf); val blueP = Offset(pointBuf[0], pointBuf[1])
+                    pointBuf[0] = triCenterImg.x; pointBuf[1] = triCenterImg.y; transform.mapPoints(pointBuf); val centerP = Offset(pointBuf[0], pointBuf[1])
+
+                    // 复用颜色常量
+                    drawLine(color = Color(0xCCFF3333), start = redP, end = centerP, strokeWidth = 4f)
+                    drawLine(color = Color(0xCC33FF33), start = greenP, end = centerP, strokeWidth = 4f)
+                    drawLine(color = Color(0xCC3366FF), start = blueP, end = centerP, strokeWidth = 4f)
+
+                    drawCircle(color = Color(0xFFFFFF00), radius = 10f, center = centerP)
+                    drawCircle(color = Color.White, radius = 6f, center = centerP, style = Stroke(width = 2f))
+                    drawCircle(color = Color(0xFFFFFF00), radius = 3f, center = centerP)
+                }
+
+                // ---------- 优化：绘制检测到的 brightSpots 标记（circle + cross） ----------
+                // 预定义颜色常量，避免重复创建
+                val redColor = Color(0xFFFF3333)
+                val greenColor = Color(0xFF33FF33)
+                val blueColor = Color(0xFF3366FF)
+                val whiteColor = Color.White
+
+                val spotBuf = FloatArray(2) // 复用FloatArray
+                brightSpots.forEach { spot ->
+                    spotBuf[0] = spot.position.x
+                    spotBuf[1] = spot.position.y
+                    transform.mapPoints(spotBuf)
+                    val x = spotBuf[0]
+                    val y = spotBuf[1]
+                    val markColor = when (spot.color) {
+                        LedColor.RED -> redColor
+                        LedColor.GREEN -> greenColor
+                        LedColor.BLUE -> blueColor
+                        else -> whiteColor
+                    }
+                    drawCircle(color = markColor, radius = 14f, center = Offset(x, y), style = Stroke(width = 4f))
+                    drawCircle(color = whiteColor, radius = 10f, center = Offset(x, y), style = Stroke(width = 1.6f))
+                    drawLine(color = markColor, start = Offset(x - 12, y), end = Offset(x + 12, y), strokeWidth = 2.6f)
+                    drawLine(color = markColor, start = Offset(x, y - 12), end = Offset(x, y + 12), strokeWidth = 2.6f)
+                    drawCircle(color = markColor, radius = 3f, center = Offset(x, y))
+                }
+
+                // ---------- 限制识别区域：处理拖拽结束后的坐标计算 ----------
+                if (!isDraggingLimitRegion && limitRegionStart != null && limitRegionEnd != null && limitRegionImageCoords == null) {
+                    // 拖拽刚结束，计算图像坐标
+                    val start = limitRegionStart!!
+                    val end = limitRegionEnd!!
+
+                    // 计算矩形边界（确保顺序正确）
+                    val minX = kotlin.math.min(start.x, end.x)
+                    val maxX = kotlin.math.max(start.x, end.x)
+                    val minY = kotlin.math.min(start.y, end.y)
+                    val maxY = kotlin.math.max(start.y, end.y)
+
+                    // 构建逆变换：从画布坐标到图像坐标
+                    val invScale = 1f / scale
+                    val imageLeft = ((minX - dx) * invScale).coerceIn(0f, imageWidth.toFloat())
+                    val imageTop = ((minY - dy) * invScale).coerceIn(0f, imageHeight.toFloat())
+                    val imageRight = ((maxX - dx) * invScale).coerceIn(0f, imageWidth.toFloat())
+                    val imageBottom = ((maxY - dy) * invScale).coerceIn(0f, imageHeight.toFloat())
+
+                    // 确保矩形有效（至少有一定的尺寸）
+                    if (imageRight > imageLeft && imageBottom > imageTop &&
+                        (imageRight - imageLeft) * (imageBottom - imageTop) > 100f) {
+                        // 在主线程中更新图像坐标（需要访问画布size，所以在这里计算）
+                        mainHandler.post {
+                            limitRegionImageCoords = ManualRoiCoords(
+                                imageLeft,
+                                imageTop,
+                                imageRight,
+                                imageBottom
+                            )
+                        }
+                    } else {
+                        // 矩形太小，清除
+                        mainHandler.post {
+                            limitRegionStart = null
+                            limitRegionEnd = null
+                            limitRegionImageCoords = null
+                        }
+                    }
+                }
+
+                // ---------- 绘制限制识别区域的半透明遮罩（区域外遮罩，区域内正常显示） ----------
+                if (limitRegionImageCoords != null || (limitRegionStart != null && limitRegionEnd != null)) {
+                    val regionRect = if (limitRegionImageCoords != null) {
+                        // 使用图像坐标转换为屏幕坐标
+                        val topLeftBuf = FloatArray(2)
+                        topLeftBuf[0] = limitRegionImageCoords!!.left
+                        topLeftBuf[1] = limitRegionImageCoords!!.top
+                        transform.mapPoints(topLeftBuf)
+                        val topLeft = Offset(topLeftBuf[0], topLeftBuf[1])
+
+                        val bottomRightBuf = FloatArray(2)
+                        bottomRightBuf[0] = limitRegionImageCoords!!.right
+                        bottomRightBuf[1] = limitRegionImageCoords!!.bottom
+                        transform.mapPoints(bottomRightBuf)
+                        val bottomRight = Offset(bottomRightBuf[0], bottomRightBuf[1])
+
+                        Rect(topLeft, bottomRight)
+                    } else {
+                        // 使用屏幕坐标（拖动中）
+                        val start = limitRegionStart!!
+                        val end = limitRegionEnd!!
+                        val minX = kotlin.math.min(start.x, end.x)
+                        val maxX = kotlin.math.max(start.x, end.x)
+                        val minY = kotlin.math.min(start.y, end.y)
+                        val maxY = kotlin.math.max(start.y, end.y)
+                        Rect(minX, minY, maxX, maxY)
+                    }
+
+                    // 更新限制区域的屏幕坐标Rect（用于判断触摸点是否在区域内）
+                    mainHandler.post {
+                        limitRegionScreenRect = regionRect
+                    }
+
+                    // 绘制半透明遮罩（区域外遮罩）
+                    // 上半部分
+                    if (regionRect.top > 0) {
+                        drawRect(
+                            color = Color(0x80000000),
+                            topLeft = Offset(0f, 0f),
+                            size = androidx.compose.ui.geometry.Size(size.width, regionRect.top)
+                        )
+                    }
+                    // 下半部分
+                    if (regionRect.bottom < size.height) {
+                        drawRect(
+                            color = Color(0x80000000),
+                            topLeft = Offset(0f, regionRect.bottom),
+                            size = androidx.compose.ui.geometry.Size(size.width, size.height - regionRect.bottom)
+                        )
+                    }
+                    // 左侧
+                    if (regionRect.left > 0) {
+                        drawRect(
+                            color = Color(0x80000000),
+                            topLeft = Offset(0f, regionRect.top),
+                            size = androidx.compose.ui.geometry.Size(regionRect.left, regionRect.height)
+                        )
+                    }
+                    // 右侧
+                    if (regionRect.right < size.width) {
+                        drawRect(
+                            color = Color(0x80000000),
+                            topLeft = Offset(regionRect.right, regionRect.top),
+                            size = androidx.compose.ui.geometry.Size(size.width - regionRect.right, regionRect.height)
+                        )
+                    }
+
+                    // 绘制限制区域的边框
+                    val strokeColor = Color(0xFFFFAA00) // 橙色边框以区分
+                    val strokeWidth = 5f
+                    val cornerLength = (kotlin.math.min(regionRect.width, regionRect.height) * 0.15f).coerceIn(15f, 40f)
+
+                    // 左上角 ┌
+                    drawLine(
+                        color = strokeColor,
+                        start = Offset(regionRect.left, regionRect.top),
+                        end = Offset(regionRect.left + cornerLength, regionRect.top),
+                        strokeWidth = strokeWidth
+                    )
+                    drawLine(
+                        color = strokeColor,
+                        start = Offset(regionRect.left, regionRect.top),
+                        end = Offset(regionRect.left, regionRect.top + cornerLength),
+                        strokeWidth = strokeWidth
+                    )
+
+                    // 右上角 ┐
+                    drawLine(
+                        color = strokeColor,
+                        start = Offset(regionRect.right, regionRect.top),
+                        end = Offset(regionRect.right - cornerLength, regionRect.top),
+                        strokeWidth = strokeWidth
+                    )
+                    drawLine(
+                        color = strokeColor,
+                        start = Offset(regionRect.right, regionRect.top),
+                        end = Offset(regionRect.right, regionRect.top + cornerLength),
+                        strokeWidth = strokeWidth
+                    )
+
+                    // 左下角 └
+                    drawLine(
+                        color = strokeColor,
+                        start = Offset(regionRect.left, regionRect.bottom),
+                        end = Offset(regionRect.left + cornerLength, regionRect.bottom),
+                        strokeWidth = strokeWidth
+                    )
+                    drawLine(
+                        color = strokeColor,
+                        start = Offset(regionRect.left, regionRect.bottom),
+                        end = Offset(regionRect.left, regionRect.bottom - cornerLength),
+                        strokeWidth = strokeWidth
+                    )
+
+                    // 右下角 ┘
+                    drawLine(
+                        color = strokeColor,
+                        start = Offset(regionRect.right, regionRect.bottom),
+                        end = Offset(regionRect.right - cornerLength, regionRect.bottom),
+                        strokeWidth = strokeWidth
+                    )
+                    drawLine(
+                        color = strokeColor,
+                        start = Offset(regionRect.right, regionRect.bottom),
+                        end = Offset(regionRect.right, regionRect.bottom - cornerLength),
+                        strokeWidth = strokeWidth
+                    )
+                }
+
+                // ---------- 手动选择的ROI区域：处理拖拽结束后的坐标计算和绘制 ----------
+                if (!isDragging && manualRoiStart != null && manualRoiEnd != null && manualRoiImageCoords == null) {
+                    // 拖拽刚结束，计算图像坐标
+                    val start = manualRoiStart!!
+                    val end = manualRoiEnd!!
+
+                    // 计算矩形边界（确保顺序正确）
+                    val minX = kotlin.math.min(start.x, end.x)
+                    val maxX = kotlin.math.max(start.x, end.x)
+                    val minY = kotlin.math.min(start.y, end.y)
+                    val maxY = kotlin.math.max(start.y, end.y)
+
+                    // 构建逆变换：从画布坐标到图像坐标
+                    val invScale = 1f / scale
+                    val imageLeft = ((minX - dx) * invScale).coerceIn(0f, imageWidth.toFloat())
+                    val imageTop = ((minY - dy) * invScale).coerceIn(0f, imageHeight.toFloat())
+                    val imageRight = ((maxX - dx) * invScale).coerceIn(0f, imageWidth.toFloat())
+                    val imageBottom = ((maxY - dy) * invScale).coerceIn(0f, imageHeight.toFloat())
+
+                    // 确保矩形有效（至少有一定的尺寸）
+                    if (imageRight > imageLeft && imageBottom > imageTop &&
+                        (imageRight - imageLeft) * (imageBottom - imageTop) > 100f) {
+                        // 在主线程中更新图像坐标（需要访问画布size，所以在这里计算）
+                        mainHandler.post {
+                            manualRoiImageCoords = ManualRoiCoords(
+                                imageLeft,
+                                imageTop,
+                                imageRight,
+                                imageBottom
+                            )
+                        }
+                    } else {
+                        // 矩形太小，清除
+                        mainHandler.post {
+                            manualRoiStart = null
+                            manualRoiEnd = null
+                            manualRoiImageCoords = null
+                        }
+                    }
+                }
+
+                // 绘制手动选择的矩形框（屏幕坐标）
+                if (manualRoiStart != null && manualRoiEnd != null) {
+                    val start = manualRoiStart!!
+                    val end = manualRoiEnd!!
+
+                    // 计算矩形边界
+                    val minX = kotlin.math.min(start.x, end.x)
+                    val maxX = kotlin.math.max(start.x, end.x)
+                    val minY = kotlin.math.min(start.y, end.y)
+                    val maxY = kotlin.math.max(start.y, end.y)
+
+                    val rectWidth = maxX - minX
+                    val rectHeight = maxY - minY
+
+                    // 绘制半透明背景
+                    drawRect(
+                        color = Color(0x3300AAFF),
+                        topLeft = Offset(minX, minY),
+                        size = androidx.compose.ui.geometry.Size(rectWidth, rectHeight)
+                    )
+
+                    // 绘制边框
+                    val strokeColor = Color(0xFF00AAFF)
+                    val strokeWidth = 4f
+
+                    // 计算角标记长度
+                    val cornerLength = (kotlin.math.min(rectWidth, rectHeight) * 0.15f).coerceIn(15f, 40f)
+
+                    // 绘制四个角的L形标记
+                    // 左上角 ┌
+                    drawLine(
+                        color = strokeColor,
+                        start = Offset(minX, minY),
+                        end = Offset(minX + cornerLength, minY),
+                        strokeWidth = strokeWidth
+                    )
+                    drawLine(
+                        color = strokeColor,
+                        start = Offset(minX, minY),
+                        end = Offset(minX, minY + cornerLength),
+                        strokeWidth = strokeWidth
+                    )
+
+                    // 右上角 ┐
+                    drawLine(
+                        color = strokeColor,
+                        start = Offset(maxX, minY),
+                        end = Offset(maxX - cornerLength, minY),
+                        strokeWidth = strokeWidth
+                    )
+                    drawLine(
+                        color = strokeColor,
+                        start = Offset(maxX, minY),
+                        end = Offset(maxX, minY + cornerLength),
+                        strokeWidth = strokeWidth
+                    )
+
+                    // 左下角 └
+                    drawLine(
+                        color = strokeColor,
+                        start = Offset(minX, maxY),
+                        end = Offset(minX + cornerLength, maxY),
+                        strokeWidth = strokeWidth
+                    )
+                    drawLine(
+                        color = strokeColor,
+                        start = Offset(minX, maxY),
+                        end = Offset(minX, maxY - cornerLength),
+                        strokeWidth = strokeWidth
+                    )
+
+                    // 右下角 ┘
+                    drawLine(
+                        color = strokeColor,
+                        start = Offset(maxX, maxY),
+                        end = Offset(maxX - cornerLength, maxY),
+                        strokeWidth = strokeWidth
+                    )
+                    drawLine(
+                        color = strokeColor,
+                        start = Offset(maxX, maxY),
+                        end = Offset(maxX, maxY - cornerLength),
+                        strokeWidth = strokeWidth
+                    )
+                }
+
+                // ---------- ROI可视化：绘制ROI区域的矩形框（使用空间分割树的最小单位） ----------
+                roiVisualizationInfo?.let { roiInfo ->
+                    // 查找ROI区域内的所有叶子节点（最小单位）
+                    val leafNodes = findLeafNodesInRoi(
+                        root = rootRect,
+                        roiLeft = roiInfo.left,
+                        roiTop = roiInfo.top,
+                        roiRight = roiInfo.right,
+                        roiBottom = roiInfo.bottom
+                    )
+
+                    // 计算ROI的外接矩形（所有叶子节点的边界）
+                    if (leafNodes.isNotEmpty()) {
+                        val roiMinLeft = leafNodes.minOf { it.left }
+                        val roiMinTop = leafNodes.minOf { it.top }
+                        val roiMaxRight = leafNodes.maxOf { it.right }
+                        val roiMaxBottom = leafNodes.maxOf { it.bottom }
+
+                        // 根据是否找到目标设置颜色
+                        val roiColor = if (roiInfo.found) {
+                            Color(0xFF00FF00) // 找到目标：绿色
+                        } else {
+                            // 未找到：根据扩大次数变化颜色（从黄色到橙色到红色）
+                            val expansionRatio = (roiInfo.expansionCount.toFloat() / 10f).coerceIn(0f, 1f)
+                            when {
+                                expansionRatio < 0.33f -> Color(0xFFFFFF00) // 黄色
+                                expansionRatio < 0.66f -> Color(0xFFFF6600) // 橙色
+                                else -> Color(0xFFFF0000) // 红色
+                            }
+                        }
+
+                        // 根据扩大次数设置透明度
+                        val roiAlpha = if (roiInfo.found) {
+                            0.7f
+                        } else {
+                            (0.3f + roiInfo.expansionCount * 0.05f).coerceAtMost(0.8f)
+                        }
+
+                        // 变换ROI矩形坐标到画布坐标
+                        val topLeftBuf = FloatArray(2)
+                        topLeftBuf[0] = roiMinLeft
+                        topLeftBuf[1] = roiMinTop
+                        transform.mapPoints(topLeftBuf)
+                        val topLeft = Offset(topLeftBuf[0], topLeftBuf[1])
+
+                        val topRightBuf = FloatArray(2)
+                        topRightBuf[0] = roiMaxRight
+                        topRightBuf[1] = roiMinTop
+                        transform.mapPoints(topRightBuf)
+                        val topRight = Offset(topRightBuf[0], topRightBuf[1])
+
+                        val bottomLeftBuf = FloatArray(2)
+                        bottomLeftBuf[0] = roiMinLeft
+                        bottomLeftBuf[1] = roiMaxBottom
+                        transform.mapPoints(bottomLeftBuf)
+                        val bottomLeft = Offset(bottomLeftBuf[0], bottomLeftBuf[1])
+
+                        val bottomRightBuf = FloatArray(2)
+                        bottomRightBuf[0] = roiMaxRight
+                        bottomRightBuf[1] = roiMaxBottom
+                        transform.mapPoints(bottomRightBuf)
+                        val bottomRight = Offset(bottomRightBuf[0], bottomRightBuf[1])
+
+                        // 计算角标记的长度（根据矩形大小动态调整，最小15像素，最大矩形边长的20%）
+                        val roiWidth = (topRight.x - topLeft.x).coerceAtLeast(1f)
+                        val roiHeight = (bottomLeft.y - topLeft.y).coerceAtLeast(1f)
+                        val cornerLength = (kotlin.math.min(roiWidth, roiHeight) * 0.15f).coerceIn(15f, 40f)
+
+                        val strokeWidth = 5f
+                        val roiColorWithAlpha = roiColor.copy(alpha = roiAlpha)
+
+                        // 绘制四个角的方框（每个角由两条线段组成L形）
+                        // 左上角 ┌
+                        drawLine(
+                            color = roiColorWithAlpha,
+                            start = topLeft,
+                            end = Offset(topLeft.x + cornerLength, topLeft.y),
+                            strokeWidth = strokeWidth
+                        )
+                        drawLine(
+                            color = roiColorWithAlpha,
+                            start = topLeft,
+                            end = Offset(topLeft.x, topLeft.y + cornerLength),
+                            strokeWidth = strokeWidth
+                        )
+
+                        // 右上角 ┐
+                        drawLine(
+                            color = roiColorWithAlpha,
+                            start = topRight,
+                            end = Offset(topRight.x - cornerLength, topRight.y),
+                            strokeWidth = strokeWidth
+                        )
+                        drawLine(
+                            color = roiColorWithAlpha,
+                            start = topRight,
+                            end = Offset(topRight.x, topRight.y + cornerLength),
+                            strokeWidth = strokeWidth
+                        )
+
+                        // 左下角 └
+                        drawLine(
+                            color = roiColorWithAlpha,
+                            start = bottomLeft,
+                            end = Offset(bottomLeft.x + cornerLength, bottomLeft.y),
+                            strokeWidth = strokeWidth
+                        )
+                        drawLine(
+                            color = roiColorWithAlpha,
+                            start = bottomLeft,
+                            end = Offset(bottomLeft.x, bottomLeft.y - cornerLength),
+                            strokeWidth = strokeWidth
+                        )
+
+                        // 右下角 ┘
+                        drawLine(
+                            color = roiColorWithAlpha,
+                            start = bottomRight,
+                            end = Offset(bottomRight.x - cornerLength, bottomRight.y),
+                            strokeWidth = strokeWidth
+                        )
+                        drawLine(
+                            color = roiColorWithAlpha,
+                            start = bottomRight,
+                            end = Offset(bottomRight.x, bottomRight.y - cornerLength),
+                            strokeWidth = strokeWidth
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * ROI范围数据类
+ */
+private data class RoiRange(val left: Int, val top: Int, val right: Int, val bottom: Int)
+
+/**
+ * 手动选择的ROI坐标数据类
+ */
+private data class ManualRoiCoords(
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float
+)
+
+/**
+ * ROI可视化信息数据类（原图坐标）
+ */
+private data class RoiVisualizationInfo(
+    val left: Float,        // ROI左边界（原图坐标）
+    val top: Float,         // ROI上边界（原图坐标）
+    val right: Float,       // ROI右边界（原图坐标）
+    val bottom: Float,      // ROI下边界（原图坐标）
+    val expansionCount: Int,   // 扩大次数
+    val found: Boolean         // 是否找到目标
+)
+
+/**
+ * 计算三个点形成的三角形的外接圆半径
+ */
+private fun calculateCircumradius(
+    p1: Offset,
+    p2: Offset,
+    p3: Offset
+): Float {
+    // 计算三条边的长度
+    val a = kotlin.math.sqrt((p2.x - p3.x) * (p2.x - p3.x) + (p2.y - p3.y) * (p2.y - p3.y))
+    val b = kotlin.math.sqrt((p1.x - p3.x) * (p1.x - p3.x) + (p1.y - p3.y) * (p1.y - p3.y))
+    val c = kotlin.math.sqrt((p1.x - p2.x) * (p1.x - p2.x) + (p1.y - p2.y) * (p1.y - p2.y))
+
+    // 计算三角形面积（海伦公式）
+    val s = (a + b + c) / 2f
+    val area = kotlin.math.sqrt((s * (s - a) * (s - b) * (s - c)).coerceAtLeast(0f))
+
+    // 如果面积为0或太小，使用最大边长作为直径
+    if (area < 1e-6f) {
+        val maxEdge = kotlin.math.max(kotlin.math.max(a, b), c)
+        return maxEdge / 2f
+    }
+
+    // 外接圆半径公式: R = (a * b * c) / (4 * area)
+    val radius = (a * b * c) / (4f * area)
+    return radius
+}
+
+/**
+ * 处理图像并检测亮点
+ */
+private fun processImage(
+    imageProxy: ImageProxy,
+    detector: BrightSpotDetector,
+    maxSpots: Int? = null,
+    gridSize: Int = 50,
+    enableRoiOptimization: Boolean = true,
+    lastTriSpots: Triple<Offset, Offset, Offset>? = null,
+    lastTriSpotsImageSize: Pair<Int, Int>? = null,
+    manualRoi: ManualRoiCoords? = null, // left, top, right, bottom (图像坐标) - 用于优先识别
+    limitRegion: ManualRoiCoords? = null, // left, top, right, bottom (图像坐标) - 用于限制识别区域
+    onRoiInfo: ((RoiVisualizationInfo?) -> Unit)? = null,
+    onSpotsDetected: (List<BrightSpot>, Pair<Int, Int>, Boolean) -> Unit, // spots, size, foundInManualRoi
+    onBitmapCaptured: (Bitmap) -> Unit = {}
+) {
+    try {
+        // 将ImageProxy转换为Bitmap
+        val bitmap = imageProxy.toBitmap()
+
+        // 旋转图像以匹配设备方向
+        val rotatedBitmap = rotateBitmap(bitmap, imageProxy.imageInfo.rotationDegrees.toFloat())
+
+        // 下采样以提升检测性能（保持纵横比）
+        // 注意：增大maxDim可以提高微小LED的识别能力，但会降低性能
+        // 对于微小LED，建议使用1280或更高（原640）
+        val maxDim = 1280f  // 增大以提高微小LED检测能力
+        val origW = rotatedBitmap.width
+        val origH = rotatedBitmap.height
+        val scaleDown = kotlin.math.min(1f, maxDim / kotlin.math.max(origW, origH))
+        val workingBitmap = if (scaleDown < 1f) {
+            rotatedBitmap.scale(
+                (origW * scaleDown).toInt().coerceAtLeast(1),
+                (origH * scaleDown).toInt().coerceAtLeast(1)
+            )
+        } else rotatedBitmap
+
+        // 计算ROI（如果存在上一个三色点位置且ROI优化已启用）
+        // 基于三色点的外接圆半径来计算ROI搜索范围
+        val initialRoiInfo = if (enableRoiOptimization && lastTriSpots != null && lastTriSpotsImageSize != null && maxSpots == 3) {
+            val (lastW, lastH) = lastTriSpotsImageSize
+            val (currW, currH) = rotatedBitmap.width to rotatedBitmap.height
+            // 将上一个三个点的位置映射到当前图像尺寸（考虑缩放）
+            val scaleX = currW.toFloat() / lastW.toFloat()
+            val scaleY = currH.toFloat() / lastH.toFloat()
+            val p1Scaled = Offset(
+                lastTriSpots.first.x * scaleX,
+                lastTriSpots.first.y * scaleY
+            )
+            val p2Scaled = Offset(
+                lastTriSpots.second.x * scaleX,
+                lastTriSpots.second.y * scaleY
+            )
+            val p3Scaled = Offset(
+                lastTriSpots.third.x * scaleX,
+                lastTriSpots.third.y * scaleY
+            )
+
+            // 计算外接圆半径
+            val circumradius = calculateCircumradius(p1Scaled, p2Scaled, p3Scaled)
+
+            // 计算中心点
+            val centerX = (p1Scaled.x + p2Scaled.x + p3Scaled.x) / 3f
+            val centerY = (p1Scaled.y + p2Scaled.y + p3Scaled.y) / 3f
+
+            // ROI搜索半径：外接圆半径的3倍（允许一些移动和误差）
+            // 同时设置最小和最大限制，避免ROI太小或太大
+            val minRoiRadius = kotlin.math.max(currW, currH) * 0.01f  // 最小为图像尺寸的1%
+            val maxRoiRadius = kotlin.math.max(currW, currH) * 0.25f  // 最大为图像尺寸的25%
+            val roiRadius = (circumradius * 2f).coerceIn(minRoiRadius, maxRoiRadius)
+
+            // 计算workingBitmap的缩放比例
+            val workingScaleValue = kotlin.math.min(workingBitmap.width.toFloat() / currW, workingBitmap.height.toFloat() / currH)
+
+            // 映射中心点和半径到workingBitmap尺寸
+            val workingCenterX = centerX * workingScaleValue
+            val workingCenterY = centerY * workingScaleValue
+            val workingRoiRadius = roiRadius * workingScaleValue
+
+            Triple(workingCenterX, workingCenterY, workingRoiRadius)
+        } else null
+
+        // 计算原图尺寸和workingBitmap尺寸的缩放比例（用于ROI可视化）
+        // workingBitmap相对于rotatedBitmap的缩放比例
+        val workingScale = kotlin.math.min(workingBitmap.width.toFloat() / rotatedBitmap.width, workingBitmap.height.toFloat() / rotatedBitmap.height)
+
+        // 如果有限制区域，计算限制区域在workingBitmap中的坐标
+        data class LimitRegionWorking(
+            val left: Int,
+            val top: Int,
+            val right: Int,
+            val bottom: Int
+        )
+        val limitRegionWorking = if (limitRegion != null) {
+            val workingWidth = workingBitmap.width
+            val workingHeight = workingBitmap.height
+            val limitLeft = (limitRegion.left * workingScale).toInt().coerceAtLeast(0).coerceAtMost(workingWidth - 1)
+            val limitTop = (limitRegion.top * workingScale).toInt().coerceAtLeast(0).coerceAtMost(workingHeight - 1)
+            val limitRight = (limitRegion.right * workingScale).toInt().coerceAtLeast(limitLeft + 1).coerceAtMost(workingWidth - 1)
+            val limitBottom = (limitRegion.bottom * workingScale).toInt().coerceAtLeast(limitTop + 1).coerceAtMost(workingHeight - 1)
+            LimitRegionWorking(limitLeft, limitTop, limitRight, limitBottom)
+        } else null
+
+        // 优先使用手动选择的ROI（但如果有限制区域，必须与限制区域取交集）
+        val (spotsScaled, foundInManualRoi) = if (manualRoi != null) {
+            // 使用手动选择的ROI区域
+            val roiLeftOrig = manualRoi.left
+            val roiTopOrig = manualRoi.top
+            val roiRightOrig = manualRoi.right
+            val roiBottomOrig = manualRoi.bottom
+            val workingWidth = workingBitmap.width
+            val workingHeight = workingBitmap.height
+
+            // 将原图坐标映射到workingBitmap坐标
+            var roiLeft = (roiLeftOrig * workingScale).toInt().coerceAtLeast(0).coerceAtMost(workingWidth - 1)
+            var roiTop = (roiTopOrig * workingScale).toInt().coerceAtLeast(0).coerceAtMost(workingHeight - 1)
+            var roiRight = (roiRightOrig * workingScale).toInt().coerceAtLeast(roiLeft + 1).coerceAtMost(workingWidth - 1)
+            var roiBottom = (roiBottomOrig * workingScale).toInt().coerceAtLeast(roiTop + 1).coerceAtMost(workingHeight - 1)
+
+            // 如果有限制区域，将ROI与限制区域取交集
+            if (limitRegionWorking != null) {
+                roiLeft = kotlin.math.max(roiLeft, limitRegionWorking.left)
+                roiTop = kotlin.math.max(roiTop, limitRegionWorking.top)
+                roiRight = kotlin.math.min(roiRight, limitRegionWorking.right)
+                roiBottom = kotlin.math.min(roiBottom, limitRegionWorking.bottom)
+                // 如果交集无效，使用限制区域
+                if (roiRight <= roiLeft || roiBottom <= roiTop) {
+                    roiLeft = limitRegionWorking.left
+                    roiTop = limitRegionWorking.top
+                    roiRight = limitRegionWorking.right
+                    roiBottom = limitRegionWorking.bottom
+                }
+            }
+
+            // 清除ROI可视化信息（因为使用手动ROI时不需要显示自动ROI）
+            onRoiInfo?.invoke(null)
+
+            // 在手动ROI区域内检测（已与限制区域取交集）
+            val manualRoiSpots = detector.detectBrightSpots(
+                bitmap = workingBitmap,
+                threshold = 80f,
+                gridSize = gridSize,
+                maxSpots = maxSpots,
+                detectColoredLeds = (maxSpots == 3),
+                roiLeft = roiLeft,
+                roiTop = roiTop,
+                roiRight = roiRight,
+                roiBottom = roiBottom
+            )
+
+            // 检查是否在手动ROI中找到了三色点
+            val foundInManualRoiFlag = manualRoiSpots.size == 3 && maxSpots == 3
+
+            Pair(manualRoiSpots, foundInManualRoiFlag)
+        } else if (initialRoiInfo != null && maxSpots == 3) {
+            // 有初始ROI，尝试渐进扩大
+            val (centerX, centerY, initialRoiRadius) = initialRoiInfo
+            var currentRadius = initialRoiRadius
+            val workingWidth = workingBitmap.width
+            val workingHeight = workingBitmap.height
+
+            // 如果有限制区域，确保中心点在限制区域内，并限制最大半径
+            val maxRadiusLimit = if (limitRegionWorking != null) {
+                val limitWidth = limitRegionWorking.right - limitRegionWorking.left
+                val limitHeight = limitRegionWorking.bottom - limitRegionWorking.top
+                // 限制半径不超过限制区域的对角线的一半
+                kotlin.math.max(limitWidth, limitHeight) * 0.5f
+            } else null
+
+            // 最大ROI半径为图像最大尺寸的80%（避免几乎全图搜索）
+            val maxAllowedRadius = kotlin.math.min(
+                kotlin.math.max(workingWidth, workingHeight) * 0.4f,
+                maxRadiusLimit ?: Float.MAX_VALUE
+            )
+
+            var foundSpots: List<BrightSpot>? = null
+            var expansionCount = 0
+            val maxExpansions = 10 // 最多扩大10次，避免无限循环
+
+            // 逐步扩大ROI并检测
+            var finalRoiInfo: RoiVisualizationInfo? = null
+            while (foundSpots == null && currentRadius <= maxAllowedRadius && expansionCount < maxExpansions) {
+                // 计算当前ROI范围（workingBitmap尺寸）
+                val roiLeft = (centerX - currentRadius).toInt().coerceAtLeast(0)
+                val roiTop = (centerY - currentRadius).toInt().coerceAtLeast(0)
+                val roiRight = (centerX + currentRadius).toInt().coerceAtMost(workingWidth - 1)
+                val roiBottom = (centerY + currentRadius).toInt().coerceAtMost(workingHeight - 1)
+
+                // 确保ROI有效
+                if (roiRight > roiLeft && roiBottom > roiTop) {
+                    // 如果有限制区域，确保ROI在限制区域内
+                    var finalRoiLeft = roiLeft
+                    var finalRoiTop = roiTop
+                    var finalRoiRight = roiRight
+                    var finalRoiBottom = roiBottom
+
+                    if (limitRegionWorking != null) {
+                        finalRoiLeft = kotlin.math.max(roiLeft, limitRegionWorking.left)
+                        finalRoiTop = kotlin.math.max(roiTop, limitRegionWorking.top)
+                        finalRoiRight = kotlin.math.min(roiRight, limitRegionWorking.right)
+                        finalRoiBottom = kotlin.math.min(roiBottom, limitRegionWorking.bottom)
+                        // 如果交集无效，跳过此次检测
+                        if (finalRoiRight <= finalRoiLeft || finalRoiBottom <= finalRoiTop) {
+                            currentRadius *= 1.3f
+                            expansionCount++
+                            continue
+                        }
+                    }
+
+                    // 计算原图尺寸下的ROI坐标（用于可视化）
+                    val originalRoiLeft = finalRoiLeft / workingScale
+                    val originalRoiTop = finalRoiTop / workingScale
+                    val originalRoiRight = finalRoiRight / workingScale
+                    val originalRoiBottom = finalRoiBottom / workingScale
+
+                    val roiSpots = detector.detectBrightSpots(
+                        bitmap = workingBitmap,
+                        threshold = 80f,
+                        gridSize = gridSize,
+                        maxSpots = maxSpots,
+                        detectColoredLeds = (maxSpots == 3),
+                        roiLeft = finalRoiLeft,
+                        roiTop = finalRoiTop,
+                        roiRight = finalRoiRight,
+                        roiBottom = finalRoiBottom
+                    )
+
+                    // 如果找到了三个点，使用结果并保存最终ROI信息
+                    if (roiSpots.size == 3) {
+                        foundSpots = roiSpots
+                        finalRoiInfo = RoiVisualizationInfo(
+                            left = originalRoiLeft,
+                            top = originalRoiTop,
+                            right = originalRoiRight,
+                            bottom = originalRoiBottom,
+                            expansionCount = expansionCount,
+                            found = true
+                        )
+                    } else {
+                        // 保存当前ROI信息（用于显示扩大过程），但仅在最终确定后更新
+                        finalRoiInfo = RoiVisualizationInfo(
+                            left = originalRoiLeft,
+                            top = originalRoiTop,
+                            right = originalRoiRight,
+                            bottom = originalRoiBottom,
+                            expansionCount = expansionCount,
+                            found = false
+                        )
+                        // 未找到，扩大ROI半径（增加30%）
+                        currentRadius *= 1.3f
+                        expansionCount++
+                    }
+                } else {
+                    // ROI无效，跳出循环
+                    break
+                }
+            }
+
+            // 如果在扩大过程中找到了，使用结果；否则进行全图搜索（或在限制区域内搜索）
+            if (foundSpots == null) {
+                // 清除ROI可视化信息（因为要进行全图搜索）
+                onRoiInfo?.invoke(null)
+                // 如果有限制区域，只在限制区域内搜索；否则全图搜索
+                val searchResult = if (limitRegionWorking != null) {
+                    detector.detectBrightSpots(
+                        bitmap = workingBitmap,
+                        threshold = 80f,
+                        gridSize = gridSize,
+                        maxSpots = maxSpots,
+                        detectColoredLeds = (maxSpots == 3),
+                        roiLeft = limitRegionWorking.left,
+                        roiTop = limitRegionWorking.top,
+                        roiRight = limitRegionWorking.right,
+                        roiBottom = limitRegionWorking.bottom
+                    )
+                } else {
+                    detector.detectBrightSpots(
+                        bitmap = workingBitmap,
+                        threshold = 80f,
+                        gridSize = gridSize,
+                        maxSpots = maxSpots,
+                        detectColoredLeds = (maxSpots == 3)
+                    )
+                }
+                Pair(searchResult, false)
+            } else {
+                // 只在最终确定后更新一次ROI信息，避免闪烁
+                finalRoiInfo?.let { onRoiInfo?.invoke(it) }
+                Pair(foundSpots, false)
+            }
+        } else {
+            // 没有上一个位置或不在三色模式，全图搜索（或在限制区域内搜索）
+            // 清除ROI可视化信息
+            onRoiInfo?.invoke(null)
+            // 如果有限制区域，只在限制区域内搜索；否则全图搜索
+            val searchResult = if (limitRegionWorking != null) {
+                detector.detectBrightSpots(
+                    bitmap = workingBitmap,
+                    threshold = 80f,
+                    gridSize = gridSize,
+                    maxSpots = maxSpots,
+                    detectColoredLeds = (maxSpots == 3),
+                    roiLeft = limitRegionWorking.left,
+                    roiTop = limitRegionWorking.top,
+                    roiRight = limitRegionWorking.right,
+                    roiBottom = limitRegionWorking.bottom
+                )
+            } else {
+                detector.detectBrightSpots(
+                    bitmap = workingBitmap,
+                    threshold = 80f,
+                    gridSize = gridSize,
+                    maxSpots = maxSpots,
+                    detectColoredLeds = (maxSpots == 3)
+                )
+            }
+            Pair(searchResult, false)
+        }
+
+        // 将检测到的坐标映射回原图尺寸
+        val invScale = if (scaleDown < 1f) 1f / scaleDown else 1f
+        val spotsMapped = if (scaleDown < 1f) {
+            spotsScaled.map { s ->
+                s.copy(position = Offset(s.position.x * invScale, s.position.y * invScale))
+            }
+        } else spotsScaled
+
+        // 如果有限制区域，过滤掉区域外的点
+        val spots = if (limitRegion != null) {
+            spotsMapped.filter { spot ->
+                val x = spot.position.x
+                val y = spot.position.y
+                x >= limitRegion.left && x <= limitRegion.right &&
+                        y >= limitRegion.top && y <= limitRegion.bottom
+            }
+        } else {
+            spotsMapped
+        }
+
+        // 在原始分辨率上做一次局部颜色加权质心细化，提升圆心定位精度
+        val refinedSpots = refineSpotsOnOriginal(
+            bitmap = rotatedBitmap,
+            spots = spots,
+            gridSize = gridSize
+        )
+
+        onSpotsDetected(refinedSpots, Pair(rotatedBitmap.width, rotatedBitmap.height), foundInManualRoi)
+
+        // 提供bitmap副本用于校准（避免被回收）
+        val bitmapCopy = rotatedBitmap.copy(rotatedBitmap.config ?: Bitmap.Config.ARGB_8888, false)
+        onBitmapCaptured(bitmapCopy)
+
+        // 清理
+        if (rotatedBitmap != bitmap) {
+            rotatedBitmap.recycle()
+        }
+        if (workingBitmap != rotatedBitmap) {
+            workingBitmap.recycle()
+        }
+        bitmap.recycle()
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+}
+
+private fun refineSpotsOnOriginal(
+    bitmap: Bitmap,
+    spots: List<BrightSpot>,
+    gridSize: Int
+): List<BrightSpot> {
+    if (spots.isEmpty()) return spots
+    val width = bitmap.width
+    val height = bitmap.height
+    val step = kotlin.math.max(1, kotlin.math.max(width / gridSize, height / gridSize))
+    val radius = (step * 2f).toInt().coerceAtLeast(6).coerceAtMost(kotlin.math.min(width, height) / 6)
+
+    fun weightFor(pixel: Int, prefer: LedColor): Float {
+        val r = ((pixel shr 16) and 0xFF).toFloat()
+        val g = ((pixel shr 8) and 0xFF).toFloat()
+        val b = (pixel and 0xFF).toFloat()
+        val w: Float = when (prefer) {
+            LedColor.GREEN -> g - (r + b) / 2f
+            LedColor.RED -> r - (g + b) / 2f
+            LedColor.BLUE -> b - (r + g) / 2f
+            else -> r + g + b
+        }
+        return if (w > 0f) w else 0f
+    }
+
+    fun refineOne(cx: Float, cy: Float, prefer: LedColor): Offset {
+        var centerX = cx
+        var centerY = cy
+        repeat(2) {
+            val x0 = (centerX - radius).toInt().coerceAtLeast(0)
+            val y0 = (centerY - radius).toInt().coerceAtLeast(0)
+            val x1 = (centerX + radius).toInt().coerceAtMost(width - 1)
+            val y1 = (centerY + radius).toInt().coerceAtMost(height - 1)
+            val wRect = x1 - x0 + 1
+            val hRect = y1 - y0 + 1
+            if (wRect <= 0 || hRect <= 0) return@repeat
+            val buf = IntArray(wRect * hRect)
+            bitmap.getPixels(buf, 0, wRect, x0, y0, wRect, hRect)
+            var sumW = 0f
+            var sumX = 0f
+            var sumY = 0f
+            // 轻度径向加权，抑制边缘（高斯近似常数系数）
+            val radF = radius.toFloat()
+            val invTwoSigma2 = 1f / (2f * (radF * 0.6f) * (radF * 0.6f))
+            for (yy in 0 until hRect) {
+                val row = yy * wRect
+                val yAbs = (y0 + yy).toFloat()
+                for (xx in 0 until wRect) {
+                    val xAbs = (x0 + xx).toFloat()
+                    val w = weightFor(buf[row + xx], prefer)
+                    if (w <= 0f) continue
+                    val dx = xAbs - centerX
+                    val dy = yAbs - centerY
+                    val radial = kotlin.math.exp(-(dx * dx + dy * dy) * invTwoSigma2)
+                    val ww = w * radial
+                    sumW += ww
+                    sumX += ww * xAbs
+                    sumY += ww * yAbs
+                }
+            }
+            if (sumW > 0f) {
+                centerX = sumX / sumW
+                centerY = sumY / sumW
+            } else {
+                return Offset(centerX, centerY)
+            }
+        }
+        return Offset(centerX, centerY)
+    }
+
+    return spots.map { s ->
+        val prefer = when {
+            s.color != LedColor.UNKNOWN -> s.color
+            s.redIntensity >= s.greenIntensity && s.redIntensity >= s.blueIntensity -> LedColor.RED
+            s.greenIntensity >= s.redIntensity && s.greenIntensity >= s.blueIntensity -> LedColor.GREEN
+            else -> LedColor.BLUE
+        }
+        val refined = refineOne(s.position.x, s.position.y, prefer)
+        s.copy(position = refined)
+    }
+}
+
+/**
+ * 旋转Bitmap以匹配设备方向
+ */
+private fun rotateBitmap(bitmap: Bitmap, degrees: Float): Bitmap {
+    if (degrees == 0f) return bitmap
+
+    val matrix = Matrix()
+    matrix.postRotate(degrees)
+
+    return Bitmap.createBitmap(
+        bitmap,
+        0,
+        0,
+        bitmap.width,
+        bitmap.height,
+        matrix,
+        true
+    )
+}
+

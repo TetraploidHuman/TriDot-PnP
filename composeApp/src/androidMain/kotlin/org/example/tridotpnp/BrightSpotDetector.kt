@@ -106,7 +106,7 @@ class BrightSpotDetector {
         }
 
         // step 防止为0（必须）
-// ceil(width / gridSize)，避免右侧/底部漏扫
+        // ceil(width / gridSize)，避免右侧/底部漏扫
         val stepX = ((width + gridSize - 1) / gridSize).coerceAtLeast(1)
         val stepY = ((height + gridSize - 1) / gridSize).coerceAtLeast(1)
 
@@ -119,10 +119,10 @@ class BrightSpotDetector {
         data class Candidate(
             val x: Int,
             val y: Int,
-            val score: Float,   // 排序用分数：绿模式=greenIntensity；RGB= max(r,g,b)
-            val r: Float = 0f,
-            val g: Float = 0f,
-            val b: Float = 0f
+            val score: Float,   // 用于 Top-N/Top-K 的排序分数（允许与 raw 强度不同）
+            val r: Float = 0f,  // raw 红强度
+            val g: Float = 0f,  // raw 绿强度
+            val b: Float = 0f   // raw 蓝强度
         )
 
         // 维护 Top-K（K不大时，这种 O(K) 更新非常快，避免全量 refine）
@@ -141,9 +141,7 @@ class BrightSpotDetector {
                     minIdx = i
                 }
             }
-            if (cand.score > minVal) {
-                list[minIdx] = cand
-            }
+            if (cand.score > minVal) list[minIdx] = cand
         }
 
         // refine 半径（你原逻辑）
@@ -155,12 +153,84 @@ class BrightSpotDetector {
         }
 
         // -----------------------------
-        // A) RGB三色 + maxSpots==3：只 refine 3 次（红/绿/蓝各一次）
+        // A) RGB三色 + maxSpots==3：Top-N 候选 + 三点几何“软惩罚” + 纯度“加分” 只 refine 3 次
         // -----------------------------
         if (detectColoredLeds && maxSpots == 3) {
-            var bestRed: Candidate? = null
-            var bestGreen: Candidate? = null
-            var bestBlue: Candidate? = null
+
+            // ===== 可调参数（先用默认值）=====
+            val topN = 25                              // 比 25 更稳，减少“刚好被挤出 TopN”的闪烁
+            val base = kotlin.math.max(stepX, stepY).toFloat()
+
+            // 几何范围（不再硬过滤，而是软惩罚）
+            val minPairDist = base * 2f              // 允许更近一些，减少移动时掉线
+            val maxPairDist = base * 20.0f             // 允许更远一些，减少移动时掉线
+            val minPairDist2 = minPairDist * minPairDist
+            val maxPairDist2 = maxPairDist * maxPairDist
+
+            // 形状/几何惩罚权重
+            val shapePenaltyW = 0.12f                  // 等边偏好（软）
+            val geoPenaltyW = 0.6f                    // 超出距离范围的惩罚（软）
+
+            // 纯度加分强度：越大越强调“颜色优势”
+            val purityBoostW = 0.25f
+
+            fun dist2(ax: Int, ay: Int, bx: Int, by: Int): Float {
+                val dx = (ax - bx).toFloat()
+                val dy = (ay - by).toFloat()
+                return dx * dx + dy * dy
+            }
+
+            // 距离范围惩罚：在范围内=0；范围外按相对超出比例增加惩罚
+            fun rangePenalty(d2: Float, min2: Float, max2: Float): Float {
+                return when {
+                    d2 < min2 -> (min2 - d2) / (min2 + 1e-6f)
+                    d2 > max2 -> (d2 - max2) / (max2 + 1e-6f)
+                    else -> 0f
+                }
+            }
+
+            // Top-N（按 score）维护
+            fun pushTopN(list: MutableList<Candidate>, cand: Candidate, n: Int) {
+                if (n <= 0) return
+                if (list.size < n) {
+                    list.add(cand)
+                    return
+                }
+                var minIdx = 0
+                var minVal = list[0].score
+                for (i in 1 until list.size) {
+                    val v = list[i].score
+                    if (v < minVal) {
+                        minVal = v
+                        minIdx = i
+                    }
+                }
+                if (cand.score > minVal) list[minIdx] = cand
+            }
+
+            // 纯度加分：用 raw 强度计算颜色优势，输出一个“用于排序”的分数
+            // 说明：不再用 purityRatio 硬门槛，否则一抖就掉候选 -> 鬼畜
+            fun redScore(rI: Float, gI: Float, bI: Float): Float {
+                val denom = (gI + bI + 1e-3f)
+                val purity = rI / denom          // 越大越“红”
+                return rI * (1f + purityBoostW * kotlin.math.ln(1f + purity))
+            }
+
+            fun greenScore(rI: Float, gI: Float, bI: Float): Float {
+                val denom = (rI + bI + 1e-3f)
+                val purity = gI / denom
+                return gI * (1f + purityBoostW * kotlin.math.ln(1f + purity))
+            }
+
+            fun blueScore(rI: Float, gI: Float, bI: Float): Float {
+                val denom = (rI + gI + 1e-3f)
+                val purity = bI / denom
+                return bI * (1f + purityBoostW * kotlin.math.ln(1f + purity))
+            }
+
+            val reds = mutableListOf<Candidate>()
+            val greens = mutableListOf<Candidate>()
+            val blues = mutableListOf<Candidate>()
 
             for (i in startI..endI) {
                 val cx = (i * stepX + stepX / 2).coerceIn(0, width - 1)
@@ -182,22 +252,69 @@ class BrightSpotDetector {
                     val gI = intensities.second
                     val bI = intensities.third
 
-                    // 粗阈值门槛：太弱的不参与（少噪点、少误检）
+                    // 基础阈值：至少要有一个通道足够强
                     val best = maxOf(rI, gI, bI)
                     if (best <= threshold) continue
 
-                    if (bestRed == null || rI > bestRed.r) {
-                        bestRed = Candidate(cx, cy, score = rI, r = rI, g = gI, b = bI)
-                    }
-                    if (bestGreen == null || gI > bestGreen.g) {
-                        bestGreen = Candidate(cx, cy, score = gI, r = rI, g = gI, b = bI)
-                    }
-                    if (bestBlue == null || bI > bestBlue.b) {
-                        bestBlue = Candidate(cx, cy, score = bI, r = rI, g = gI, b = bI)
+                    // 不做“纯度硬门槛”，而是三路都允许进入 Top-N，
+                    // 由 score（含纯度加分）决定谁更像“真正的红/绿/蓝点”
+                    pushTopN(reds, Candidate(cx, cy, score = redScore(rI, gI, bI), r = rI, g = gI, b = bI), topN)
+                    pushTopN(greens, Candidate(cx, cy, score = greenScore(rI, gI, bI), r = rI, g = gI, b = bI), topN)
+                    pushTopN(blues, Candidate(cx, cy, score = blueScore(rI, gI, bI), r = rI, g = gI, b = bI), topN)
+                }
+            }
+
+            if (reds.isEmpty() || greens.isEmpty() || blues.isEmpty()) return emptyList()
+
+            var bestTripleR: Candidate? = null
+            var bestTripleG: Candidate? = null
+            var bestTripleB: Candidate? = null
+            var bestGroupScore = Float.NEGATIVE_INFINITY
+
+            for (rC in reds) {
+                for (gC in greens) {
+                    val dRG2 = dist2(rC.x, rC.y, gC.x, gC.y)
+
+                    for (bC in blues) {
+                        val dRB2 = dist2(rC.x, rC.y, bC.x, bC.y)
+                        val dGB2 = dist2(gC.x, gC.y, bC.x, bC.y)
+
+                        // === A 改进：几何范围不硬过滤，而是软惩罚 ===
+                        val geoPenalty =
+                            rangePenalty(dRG2, minPairDist2, maxPairDist2) +
+                                    rangePenalty(dRB2, minPairDist2, maxPairDist2) +
+                                    rangePenalty(dGB2, minPairDist2, maxPairDist2)
+
+                        // 形状惩罚：鼓励三边长度相近（仍是软）
+                        val dRG = kotlin.math.sqrt(dRG2)
+                        val dRB = kotlin.math.sqrt(dRB2)
+                        val dGB = kotlin.math.sqrt(dGB2)
+                        val mean = (dRG + dRB + dGB) / 3f
+                        val shapePenalty = if (mean > 1e-3f) {
+                            (kotlin.math.abs(dRG - mean) + kotlin.math.abs(dRB - mean) + kotlin.math.abs(dGB - mean)) / mean
+                        } else 1f
+
+                        // 颜色分数：用 raw 强度（更符合真实亮度），不要用带纯度加分的 score
+                        val colorScore = rC.r + gC.g + bC.b
+
+                        val groupScore =
+                            colorScore -
+                                    shapePenaltyW * colorScore * shapePenalty -
+                                    geoPenaltyW * colorScore * geoPenalty
+
+                        if (groupScore > bestGroupScore) {
+                            bestGroupScore = groupScore
+                            bestTripleR = rC
+                            bestTripleG = gC
+                            bestTripleB = bC
+                        }
                     }
                 }
             }
 
+            if (bestTripleR == null || bestTripleG == null || bestTripleB == null) return emptyList()
+
+            // 只 refine 这 3 个
             val refineRadius = calcRefineRadius()
             val result = ArrayList<BrightSpot>(3)
 
@@ -230,9 +347,9 @@ class BrightSpotDetector {
                 )
             }
 
-            addRefined(bestRed, LedColor.RED)
-            addRefined(bestGreen, LedColor.GREEN)
-            addRefined(bestBlue, LedColor.BLUE)
+            addRefined(bestTripleR, LedColor.RED)
+            addRefined(bestTripleG, LedColor.GREEN)
+            addRefined(bestTripleB, LedColor.BLUE)
             return result
         }
 
@@ -272,12 +389,12 @@ class BrightSpotDetector {
                     val score = maxOf(rI, gI, bI)
 
                     if (maxSpots == null) {
-                        // 阈值模式：只有超过阈值才 refine（第三点核心）
+                        // 阈值模式：只有超过阈值才 refine
                         if (score > threshold) {
                             candidates.add(Candidate(cx, cy, score, rI, gI, bI))
                         }
                     } else {
-                        // Top-K：保留最强 K 个，后面只 refine 这些
+                        // Top-K：保留最强 K 个
                         pushTopK(candidates, Candidate(cx, cy, score, rI, gI, bI), k)
                     }
                 } else {
@@ -292,12 +409,10 @@ class BrightSpotDetector {
                     )
 
                     if (maxSpots == null) {
-                        // 阈值模式：超过阈值才进入候选
                         if (greenIntensity > threshold) {
                             candidates.add(Candidate(cx, cy, greenIntensity))
                         }
                     } else {
-                        // Top-K：不管阈值，保留最强 K 个
                         pushTopK(candidates, Candidate(cx, cy, greenIntensity), k)
                     }
                 }
@@ -306,7 +421,7 @@ class BrightSpotDetector {
 
         if (candidates.isEmpty()) return emptyList()
 
-        // 只 refine 候选（数量已大幅减少）
+        // 只 refine 候选
         val refineRadius = calcRefineRadius()
         val refinedSpots = ArrayList<BrightSpot>(candidates.size)
 

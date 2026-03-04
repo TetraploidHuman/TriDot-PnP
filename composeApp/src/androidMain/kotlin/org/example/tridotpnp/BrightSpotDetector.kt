@@ -106,8 +106,9 @@ class BrightSpotDetector {
         }
 
         // step 防止为0（必须）
-        val stepX = (width / gridSize).coerceAtLeast(1)
-        val stepY = (height / gridSize).coerceAtLeast(1)
+// ceil(width / gridSize)，避免右侧/底部漏扫
+        val stepX = ((width + gridSize - 1) / gridSize).coerceAtLeast(1)
+        val stepY = ((height + gridSize - 1) / gridSize).coerceAtLeast(1)
 
         // 计算网格范围（只遍历 ROI 覆盖到的格子）
         val startI = (searchLeft / stepX).coerceAtLeast(0)

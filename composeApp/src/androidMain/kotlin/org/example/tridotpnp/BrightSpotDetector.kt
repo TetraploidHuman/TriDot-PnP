@@ -43,6 +43,10 @@ class BrightSpotDetector {
     var minPixelCount: Int = 1  // 最小像素数（原3）
     var minRefineRadius: Int = 2  // 最小细化半径（原6）
 
+    // 面积过滤：在 (2*radiusX+1)*(2*radiusY+1) 的区域里，超过 dynThreshold 的像素太多 => 大块亮色，过滤掉
+    var maxBrightPixelRatio: Float = 0.18f   // 亮像素最多占区域面积的 18%（可调 0.10~0.30）
+    var maxBrightPixelCountMin: Int = 12     // 小窗口时给一个最低上限，避免 ratio 算出来太小导致误杀（可调 6~30）
+
     private fun obtainPixelBuffer(w: Int, h: Int): IntArray {
         val neededSize = w * h
         // 如果当前缓存为空或缓存大小不匹配，则重新分配
@@ -666,6 +670,16 @@ class BrightSpotDetector {
             }
         }
         if (count < minPixelCount) return null
+
+        val regionW = (endX - startX + 1)
+        val regionH = (endY - startY + 1)
+        val regionArea = regionW * regionH
+        val maxAllowed = kotlin.math.max(
+            maxBrightPixelCountMin,
+            (regionArea * maxBrightPixelRatio).toInt()
+        )
+        if (count > maxAllowed) return null
+
         val avgRed = totalRed / count
         val avgGreen = totalGreen / count
         val avgBlue = totalBlue / count

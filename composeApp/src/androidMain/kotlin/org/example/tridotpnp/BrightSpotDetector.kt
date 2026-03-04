@@ -29,6 +29,10 @@ data class ColorCalibration(
 )
 
 class BrightSpotDetector {
+    private var pixelBuffer: IntArray? = null
+    private var bufferW = 0
+    private var bufferH = 0
+
     // 颜色校准数据（可选）
     private var calibration: ColorCalibration? = null
 
@@ -38,6 +42,18 @@ class BrightSpotDetector {
     var dynamicThresholdMin: Float = 50f  // 动态阈值最小值（原100f）
     var minPixelCount: Int = 1  // 最小像素数（原3）
     var minRefineRadius: Int = 2  // 最小细化半径（原6）
+
+    private fun obtainPixelBuffer(w: Int, h: Int): IntArray {
+        val neededSize = w * h
+        // 如果当前缓存为空或缓存大小不匹配，则重新分配
+        if (pixelBuffer == null || pixelBuffer!!.size < neededSize || bufferW != w || bufferH != h) {
+            bufferW = w
+            bufferH = h
+            pixelBuffer = IntArray(neededSize)
+        }
+        return pixelBuffer!!
+    }
+
 
     /**
      * 设置颜色校准数据
@@ -82,7 +98,7 @@ class BrightSpotDetector {
         val searchBottom = (roiBottom?.coerceAtMost(height - 1) ?: (height - 1)).coerceAtLeast(searchTop)
 
         // 一次性读像素
-        val pixels = IntArray(width * height)
+        val pixels = obtainPixelBuffer(width, height)
         try {
             bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
         } catch (_: Exception) {

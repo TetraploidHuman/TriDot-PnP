@@ -67,15 +67,15 @@ fun BrightSpotDetectionApp() {
     val cameraPermissionState = rememberPermissionState(Manifest.permission.CAMERA)
     var detectedSpotsCount by remember { mutableIntStateOf(0) }
     var detectedSpots by remember { mutableStateOf<List<BrightSpot>>(emptyList()) }
-    var maxSpots by remember { mutableIntStateOf(1) } // 默认显示最亮的1个点
+    var maxSpots by remember { mutableIntStateOf(3) } // 默认显示最亮的1个点
     var exposureCompensation by remember { mutableIntStateOf(0) } // 曝光补偿，0为默认值
-    var gridSize by remember { mutableIntStateOf(50) } // 检测网格大小，默认50x50
+    var gridSize by remember { mutableIntStateOf(256) } // 检测网格大小，默认50x50
     var knownDistance by remember { mutableFloatStateOf(100f) } // 已知的两点距离（毫米）
     var pnpResult by remember { mutableStateOf<PnPDistanceCalculator.PnPResult?>(null) }
     var imageSize by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var fps by remember { mutableFloatStateOf(0f) } // 识别帧率
     var enableRoiOptimization by remember { mutableStateOf(true) } // ROI优化开关，默认启用
-    var isControlPanelExpanded by remember { mutableStateOf(true) } // 控制面板展开状态，默认展开
+    var isControlPanelExpanded by remember { mutableStateOf(false) } // 控制面板展开状态，默认展开
     var showSettings by remember { mutableStateOf(false) } // 设置页面显示状态
 
     // 颜色校准相关

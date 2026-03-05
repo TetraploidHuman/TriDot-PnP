@@ -33,6 +33,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import androidx.core.graphics.scale
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -1265,9 +1266,13 @@ private fun processImage(
             Triple(centerX * workingScale, centerY * workingScale, radius * workingScale)
         } else null
 
-        var lastTriRadius: Float? = null // 上一帧三色点外接圆半径，用于判断移动过大
+        var lastTriRadius: Float? = null // 记录上一个外接圆半径
+        val recentAttempts = mutableListOf<Boolean>() // 记录最近尝试的结果，成功为true，失败为false
+        val maxRecentAttempts = 7  // 最近的尝试次数
+        val failureThreshold = 4  // 失败次数阈值，如果失败次数大于此阈值，则触发全局搜索
+
         val (spotsScaled, foundInManualRoi) = if (manualRoi != null) {
-            // 手动ROI逻辑保持不变
+            // 手动ROI的逻辑与之前相同，保持不变
             val roiLeftOrig = manualRoi.left
             val roiTopOrig = manualRoi.top
             val roiRightOrig = manualRoi.right
@@ -1361,7 +1366,7 @@ private fun processImage(
                 // 三色点稳定性判断
                 val isStable = if (roiSpots.size == 3 && lastTriRadius != null) {
                     val currRadius = calculateCircumradius(roiSpots[0].position, roiSpots[1].position, roiSpots[2].position)
-                    val changeRatio = kotlin.math.abs(currRadius - lastTriRadius) / lastTriRadius
+                    val changeRatio = abs(currRadius - lastTriRadius) / lastTriRadius
                     changeRatio <= 0.3f
                 } else roiSpots.size == 3
 
@@ -1379,25 +1384,32 @@ private fun processImage(
                         expansionCount = expansionCount,
                         found = true
                     )
+                    // 记录当前外接圆半径
+                    lastTriRadius = calculateCircumradius(roiSpots[0].position, roiSpots[1].position, roiSpots[2].position)
+                    // 记录成功
+                    recentAttempts.add(true)
+                    if (recentAttempts.size > maxRecentAttempts) {
+                        recentAttempts.removeAt(0)
+                    }
                 } else {
                     currentRadius *= 1.3f
                     expansionCount++
-                    val originalRoiLeft = roiLeft / workingScale
-                    val originalRoiTop = roiTop / workingScale
-                    val originalRoiRight = roiRight / workingScale
-                    val originalRoiBottom = roiBottom / workingScale
-                    finalRoiInfo = RoiVisualizationInfo(
-                        left = originalRoiLeft,
-                        top = originalRoiTop,
-                        right = originalRoiRight,
-                        bottom = originalRoiBottom,
-                        expansionCount = expansionCount,
-                        found = false
-                    )
+                    // 记录失败
+                    recentAttempts.add(false)
+                    if (recentAttempts.size > maxRecentAttempts) {
+                        recentAttempts.removeAt(0)
+                    }
+                }
+
+                // 如果最近7次中失败超过4次，触发全局搜索
+                if (recentAttempts.count { !it } >= failureThreshold) {
+                    foundSpots = null
+                    onRoiInfo?.invoke(null)
+                    break
                 }
             }
 
-            // 找到或全图搜索
+            // 如果找不到三色点，清空ROI并开始全图搜索
             if (foundSpots == null) {
                 onRoiInfo?.invoke(null)
                 val searchResult = limitRegionWorking?.let {

@@ -1,31 +1,37 @@
 package org.example.tridotpnp
 
 import android.graphics.Bitmap
+import android.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.core.graphics.get
+import kotlin.math.abs
+import kotlin.math.exp
+import kotlin.math.ln
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.sqrt
 
 enum class LedColor {
     RED, GREEN, BLUE, UNKNOWN
 }
 
-
 data class BrightSpot(
     val position: Offset,
-    val brightness: Float,  // 颜色强度
+    val brightness: Float,  // 颜色强度（这里指“与目标颜色相似度 × 亮度”）
     val color: LedColor = LedColor.UNKNOWN,  // LED颜色
-    val redIntensity: Float = 0f,    // 红色强度
-    val greenIntensity: Float = 0f,  // 绿色强度
-    val blueIntensity: Float = 0f    // 蓝色强度
+    val redIntensity: Float = 0f,    // “目标1”(RED) 强度
+    val greenIntensity: Float = 0f,  // “目标2”(GREEN) 强度
+    val blueIntensity: Float = 0f    // “目标3”(BLUE) 强度
 )
 
 /**
- * 颜色校准数据
+ * 颜色校准数据（仍用 RGB 存储；内部会转换到 HSV 做相似度）
+ * 注意：这里 red/green/blue 只是三个目标颜色的槽位名，不要求是三原色。
  */
-
 data class ColorCalibration(
-    val redColor: Triple<Float, Float, Float>,    // 红色LED的实际RGB值
-    val greenColor: Triple<Float, Float, Float>,  // 绿色LED的实际RGB值
-    val blueColor: Triple<Float, Float, Float>    // 蓝色LED的实际RGB值
+    val redColor: Triple<Float, Float, Float>,    // 目标1 的实际RGB值
+    val greenColor: Triple<Float, Float, Float>,  // 目标2 的实际RGB值
+    val blueColor: Triple<Float, Float, Float>    // 目标3 的实际RGB值
 )
 
 class BrightSpotDetector {
@@ -36,20 +42,33 @@ class BrightSpotDetector {
     // 颜色校准数据（可选）
     private var calibration: ColorCalibration? = null
 
-    // 检测参数 - 可调整以检测微小LED
-    var minPixelBrightness: Float = 50f  // 最小像素亮度（原100f）
-    var minTotalBrightness: Float = 60f  // 最小总亮度（原120f）
-    var dynamicThresholdMin: Float = 50f  // 动态阈值最小值（原100f）
-    var minPixelCount: Int = 1  // 最小像素数（原3）
-    var minRefineRadius: Int = 2  // 最小细化半径（原6）
+    // ===== HSV 目标缓存（避免每次都转）=====
+    private val targetRedHSV = FloatArray(3)
+    private val targetGreenHSV = FloatArray(3)
+    private val targetBlueHSV = FloatArray(3)
+    private var targetsPrepared = false
 
-    // 面积过滤：在 (2*radiusX+1)*(2*radiusY+1) 的区域里，超过 dynThreshold 的像素太多 => 大块亮色，过滤掉
-    var maxBrightPixelRatio: Float = 0.18f   // 亮像素最多占区域面积的 18%（可调 0.10~0.30）
-    var maxBrightPixelCountMin: Int = 12     // 小窗口时给一个最低上限，避免 ratio 算出来太小导致误杀（可调 6~30）
+    // 检测参数 - 可调整以检测微小LED
+    var minPixelBrightness: Float = 50f   // 最小像素亮度（用于 sampleColorAt 等处）
+    var minTotalBrightness: Float = 60f   // 最小总亮度（区域平均RGB之和）
+    var dynamicThresholdMin: Float = 50f  // 动态阈值最小值
+    var minPixelCount: Int = 1            // 最小像素数
+    var minRefineRadius: Int = 2          // 最小细化半径
+
+    // 面积过滤：在区域里，超过 dynThreshold 的像素太多 => 大块亮色，过滤掉
+    var maxBrightPixelRatio: Float = 0.18f   // 亮像素最多占区域面积的比例（0.10~0.30）
+    var maxBrightPixelCountMin: Int = 12     // 小窗口时兜底的最大亮像素数上限（6~30）
+
+    // ===== HSV 相似度参数（可调）=====
+    var hsvMinSaturation: Float = 0.15f   // 低饱和（偏灰/白）直接弱化/过滤
+    var hsvMinValue: Float = 0.10f        // 太暗直接弱化/过滤（HSV V）
+    var hsvHueWeight: Float = 1.0f
+    var hsvSatWeight: Float = 0.6f
+    var hsvValWeight: Float = 0.3f
+    var hsvSharpness: Float = 8.0f        // 越大越“挑剔”（相似度衰减更快）
 
     private fun obtainPixelBuffer(w: Int, h: Int): IntArray {
         val neededSize = w * h
-        // 如果当前缓存为空或缓存大小不匹配，则重新分配
         if (pixelBuffer == null || pixelBuffer!!.size < neededSize || bufferW != w || bufferH != h) {
             bufferW = w
             bufferH = h
@@ -58,26 +77,82 @@ class BrightSpotDetector {
         return pixelBuffer!!
     }
 
-
     /**
      * 设置颜色校准数据
      */
     fun setCalibration(calibrationData: ColorCalibration?) {
         calibration = calibrationData
+        targetsPrepared = false
+    }
+
+    // ===== HSV 工具 =====
+
+    private fun clamp255(v: Float): Int = v.toInt().coerceIn(0, 255)
+
+    private fun rgbTripleToHSV(rgb: Triple<Float, Float, Float>, out: FloatArray) {
+        Color.RGBToHSV(clamp255(rgb.first), clamp255(rgb.second), clamp255(rgb.third), out)
+    }
+
+    private fun ensureTargetsPrepared() {
+        if (targetsPrepared) return
+
+        val cal = calibration
+        if (cal != null) {
+            rgbTripleToHSV(cal.redColor, targetRedHSV)
+            rgbTripleToHSV(cal.greenColor, targetGreenHSV)
+            rgbTripleToHSV(cal.blueColor, targetBlueHSV)
+        } else {
+            // 没有校准时：给三组默认 HSV（只是兜底）
+            // 注意：你的目标颜色不一定是三原色，所以强烈建议传 calibration
+            targetRedHSV[0] = 0f;   targetRedHSV[1] = 1f; targetRedHSV[2] = 1f
+            targetGreenHSV[0] = 120f; targetGreenHSV[1] = 1f; targetGreenHSV[2] = 1f
+            targetBlueHSV[0] = 240f;  targetBlueHSV[1] = 1f; targetBlueHSV[2] = 1f
+        }
+        targetsPrepared = true
     }
 
     /**
-     * 检测图像中的彩色LED（红、绿、蓝）
-     * @param bitmap 要分析的图像
-     * @param threshold 颜色强度阈值 (0-255)
-     * @param gridSize 网格大小，用于将图像分成小块进行分析
-     * @param maxSpots 最多返回的亮点数量，null表示返回所有亮点
-     * @param detectColoredLeds 是否检测彩色LED（true=RGB三色，false=仅绿色）
-     * @param roiLeft ROI左边界（可选，用于限制搜索范围）
-     * @param roiTop ROI上边界（可选，用于限制搜索范围）
-     * @param roiRight ROI右边界（可选，用于限制搜索范围）
-     * @param roiBottom ROI下边界（可选，用于限制搜索范围）
-     * @return 检测到的彩色LED列表（按强度降序排列）
+     * HSV 相似度：返回 0..1
+     * - Hue 采用圆周距离（0..180）归一化到 0..1
+     * - S/V 直接差值（0..1）
+     * - 通过 exp(-sharpness * weightedDistance) 得到平滑相似度
+     */
+    private fun hsvSimilarity(hsv: FloatArray, target: FloatArray): Float {
+        val h1 = hsv[0]
+        val s1 = hsv[1]
+        val v1 = hsv[2]
+
+        // 对灰/暗做快速抑制（避免白色反光/暗噪点）
+        if (s1 < hsvMinSaturation || v1 < hsvMinValue) return 0f
+
+        val h2 = target[0]
+        val s2 = target[1]
+        val v2 = target[2]
+
+        var dh = abs(h1 - h2)
+        if (dh > 180f) dh = 360f - dh
+        val dhN = dh / 180f // 0..1
+        val ds = abs(s1 - s2) // 0..1
+        val dv = abs(v1 - v2) // 0..1
+
+        val d = hsvHueWeight * (dhN * dhN) + hsvSatWeight * (ds * ds) + hsvValWeight * (dv * dv)
+        return exp(-hsvSharpness * d).toFloat()
+    }
+
+    private fun getTargetHSV(color: LedColor): FloatArray {
+        ensureTargetsPrepared()
+        return when (color) {
+            LedColor.RED -> targetRedHSV
+            LedColor.GREEN -> targetGreenHSV
+            LedColor.BLUE -> targetBlueHSV
+            else -> targetGreenHSV
+        }
+    }
+
+    // ===== 主检测 =====
+
+    /**
+     * 检测图像中的彩色LED（3个目标色：RED/GREEN/BLUE 槽位）
      */
     fun detectBrightSpots(
         bitmap: Bitmap,
@@ -95,6 +170,9 @@ class BrightSpotDetector {
         val height = bitmap.height
         if (width <= 1 || height <= 1) return emptyList()
 
+        // 准备 HSV 目标
+        ensureTargetsPrepared()
+
         // ROI范围（或全图）
         val searchLeft = roiLeft?.coerceAtLeast(0) ?: 0
         val searchTop = roiTop?.coerceAtLeast(0) ?: 0
@@ -109,7 +187,6 @@ class BrightSpotDetector {
             return emptyList()
         }
 
-        // step 防止为0（必须）
         // ceil(width / gridSize)，避免右侧/底部漏扫
         val stepX = ((width + gridSize - 1) / gridSize).coerceAtLeast(1)
         val stepY = ((height + gridSize - 1) / gridSize).coerceAtLeast(1)
@@ -123,13 +200,12 @@ class BrightSpotDetector {
         data class Candidate(
             val x: Int,
             val y: Int,
-            val score: Float,   // 用于 Top-N/Top-K 的排序分数（允许与 raw 强度不同）
-            val r: Float = 0f,  // raw 红强度
-            val g: Float = 0f,  // raw 绿强度
-            val b: Float = 0f   // raw 蓝强度
+            val score: Float,   // Top-N/Top-K 排序分数（允许与 raw 强度不同）
+            val r: Float = 0f,  // 目标1 强度
+            val g: Float = 0f,  // 目标2 强度
+            val b: Float = 0f   // 目标3 强度
         )
 
-        // 维护 Top-K（K不大时，这种 O(K) 更新非常快，避免全量 refine）
         fun pushTopK(list: MutableList<Candidate>, cand: Candidate, k: Int) {
             if (k <= 0) return
             if (list.size < k) {
@@ -148,34 +224,30 @@ class BrightSpotDetector {
             if (cand.score > minVal) list[minIdx] = cand
         }
 
-        // refine 半径（你原逻辑）
         fun calcRefineRadius(): Int {
-            val baseRadius = kotlin.math.max(stepX, stepY)
+            val baseRadius = max(stepX, stepY)
             return (baseRadius * 1.5f).toInt()
                 .coerceAtLeast(minRefineRadius)
-                .coerceAtMost(kotlin.math.min(width, height) / 4)
+                .coerceAtMost(min(width, height) / 4)
         }
 
         // -----------------------------
-        // A) RGB三色 + maxSpots==3：Top-N 候选 + 三点几何“软惩罚” + 纯度“加分” 只 refine 3 次
+        // A) 三色 + maxSpots==3：Top-N 候选 + 三点几何软惩罚 + “纯度加分” 只 refine 3 次
         // -----------------------------
         if (detectColoredLeds && maxSpots == 3) {
 
-            // ===== 可调参数（先用默认值）=====
-            val topN = 25                              // 比 25 更稳，减少“刚好被挤出 TopN”的闪烁
-            val base = kotlin.math.max(stepX, stepY).toFloat()
+            val topN = 25
+            val base = max(stepX, stepY).toFloat()
 
-            // 几何范围（不再硬过滤，而是软惩罚）
-            val minPairDist = base * 2f              // 允许更近一些，减少移动时掉线
-            val maxPairDist = base * 20.0f             // 允许更远一些，减少移动时掉线
+            val minPairDist = base * 2f
+            val maxPairDist = base * 20.0f
             val minPairDist2 = minPairDist * minPairDist
             val maxPairDist2 = maxPairDist * maxPairDist
 
-            // 形状/几何惩罚权重
-            val shapePenaltyW = 0.12f                  // 等边偏好（软）
-            val geoPenaltyW = 0.6f                    // 超出距离范围的惩罚（软）
+            val shapePenaltyW = 0.12f
+            val geoPenaltyW = 0.6f
 
-            // 纯度加分强度：越大越强调“颜色优势”
+            // “纯度加分”：强调某个目标强度要明显胜过另外两个（不硬阈值，避免抖动掉候选）
             val purityBoostW = 0.25f
 
             fun dist2(ax: Int, ay: Int, bx: Int, by: Int): Float {
@@ -184,7 +256,6 @@ class BrightSpotDetector {
                 return dx * dx + dy * dy
             }
 
-            // 距离范围惩罚：在范围内=0；范围外按相对超出比例增加惩罚
             fun rangePenalty(d2: Float, min2: Float, max2: Float): Float {
                 return when {
                     d2 < min2 -> (min2 - d2) / (min2 + 1e-6f)
@@ -193,7 +264,6 @@ class BrightSpotDetector {
                 }
             }
 
-            // Top-N（按 score）维护
             fun pushTopN(list: MutableList<Candidate>, cand: Candidate, n: Int) {
                 if (n <= 0) return
                 if (list.size < n) {
@@ -212,24 +282,22 @@ class BrightSpotDetector {
                 if (cand.score > minVal) list[minIdx] = cand
             }
 
-            // 纯度加分：用 raw 强度计算颜色优势，输出一个“用于排序”的分数
-            // 说明：不再用 purityRatio 硬门槛，否则一抖就掉候选 -> 鬼畜
             fun redScore(rI: Float, gI: Float, bI: Float): Float {
                 val denom = (gI + bI + 1e-3f)
-                val purity = rI / denom          // 越大越“红”
-                return rI * (1f + purityBoostW * kotlin.math.ln(1f + purity))
+                val purity = rI / denom
+                return rI * (1f + purityBoostW * ln(1f + purity))
             }
 
             fun greenScore(rI: Float, gI: Float, bI: Float): Float {
                 val denom = (rI + bI + 1e-3f)
                 val purity = gI / denom
-                return gI * (1f + purityBoostW * kotlin.math.ln(1f + purity))
+                return gI * (1f + purityBoostW * ln(1f + purity))
             }
 
             fun blueScore(rI: Float, gI: Float, bI: Float): Float {
                 val denom = (rI + gI + 1e-3f)
                 val purity = bI / denom
-                return bI * (1f + purityBoostW * kotlin.math.ln(1f + purity))
+                return bI * (1f + purityBoostW * ln(1f + purity))
             }
 
             val reds = mutableListOf<Candidate>()
@@ -241,27 +309,23 @@ class BrightSpotDetector {
                 for (j in startJ..endJ) {
                     val cy = (j * stepY + stepY / 2).coerceIn(0, height - 1)
 
-                    val intensities = calculateRGBIntensitiesFast(
+                    val intensities = calculateHSVIntensitiesFast(
                         pixels = pixels,
                         bmpWidth = width,
                         bmpHeight = height,
                         centerX = cx,
                         centerY = cy,
                         radiusX = stepX / 2,
-                        radiusY = stepY / 2,
-                        calibration = calibration
+                        radiusY = stepY / 2
                     ) ?: continue
 
                     val rI = intensities.first
                     val gI = intensities.second
                     val bI = intensities.third
 
-                    // 基础阈值：至少要有一个通道足够强
                     val best = maxOf(rI, gI, bI)
                     if (best <= threshold) continue
 
-                    // 不做“纯度硬门槛”，而是三路都允许进入 Top-N，
-                    // 由 score（含纯度加分）决定谁更像“真正的红/绿/蓝点”
                     pushTopN(reds, Candidate(cx, cy, score = redScore(rI, gI, bI), r = rI, g = gI, b = bI), topN)
                     pushTopN(greens, Candidate(cx, cy, score = greenScore(rI, gI, bI), r = rI, g = gI, b = bI), topN)
                     pushTopN(blues, Candidate(cx, cy, score = blueScore(rI, gI, bI), r = rI, g = gI, b = bI), topN)
@@ -283,22 +347,20 @@ class BrightSpotDetector {
                         val dRB2 = dist2(rC.x, rC.y, bC.x, bC.y)
                         val dGB2 = dist2(gC.x, gC.y, bC.x, bC.y)
 
-                        // === A 改进：几何范围不硬过滤，而是软惩罚 ===
                         val geoPenalty =
                             rangePenalty(dRG2, minPairDist2, maxPairDist2) +
                                     rangePenalty(dRB2, minPairDist2, maxPairDist2) +
                                     rangePenalty(dGB2, minPairDist2, maxPairDist2)
 
-                        // 形状惩罚：鼓励三边长度相近（仍是软）
-                        val dRG = kotlin.math.sqrt(dRG2)
-                        val dRB = kotlin.math.sqrt(dRB2)
-                        val dGB = kotlin.math.sqrt(dGB2)
+                        val dRG = sqrt(dRG2)
+                        val dRB = sqrt(dRB2)
+                        val dGB = sqrt(dGB2)
                         val mean = (dRG + dRB + dGB) / 3f
                         val shapePenalty = if (mean > 1e-3f) {
-                            (kotlin.math.abs(dRG - mean) + kotlin.math.abs(dRB - mean) + kotlin.math.abs(dGB - mean)) / mean
+                            (abs(dRG - mean) + abs(dRB - mean) + abs(dGB - mean)) / mean
                         } else 1f
 
-                        // 颜色分数：用 raw 强度（更符合真实亮度），不要用带纯度加分的 score
+                        // 颜色分数：用 raw 强度（相似度×亮度）
                         val colorScore = rC.r + gC.g + bC.b
 
                         val groupScore =
@@ -324,7 +386,7 @@ class BrightSpotDetector {
 
             fun addRefined(c: Candidate?, color: LedColor) {
                 if (c == null) return
-                val refined = refineSpotCenterIterativeFast(
+                val refined = refineSpotCenterIterativeFastHSV(
                     pixels = pixels,
                     bmpWidth = width,
                     bmpHeight = height,
@@ -362,9 +424,8 @@ class BrightSpotDetector {
         // -----------------------------
         val candidates = mutableListOf<Candidate>()
 
-        // Top-K 的 K 值：maxSpots 越小，K 给稍大，保证稳定；上限别太大
         val k = when {
-            maxSpots == null -> 0                      // 阈值模式，不用Top-K
+            maxSpots == null -> 0
             maxSpots <= 0 -> 0
             maxSpots <= 3 -> 48
             else -> (maxSpots * 8).coerceAtMost(256)
@@ -376,15 +437,14 @@ class BrightSpotDetector {
                 val cy = (j * stepY + stepY / 2).coerceIn(0, height - 1)
 
                 if (detectColoredLeds) {
-                    val intensities = calculateRGBIntensitiesFast(
+                    val intensities = calculateHSVIntensitiesFast(
                         pixels = pixels,
                         bmpWidth = width,
                         bmpHeight = height,
                         centerX = cx,
                         centerY = cy,
                         radiusX = stepX / 2,
-                        radiusY = stepY / 2,
-                        calibration = calibration
+                        radiusY = stepY / 2
                     ) ?: continue
 
                     val rI = intensities.first
@@ -393,15 +453,14 @@ class BrightSpotDetector {
                     val score = maxOf(rI, gI, bI)
 
                     if (maxSpots == null) {
-                        // 阈值模式：只有超过阈值才 refine
                         if (score > threshold) {
                             candidates.add(Candidate(cx, cy, score, rI, gI, bI))
                         }
                     } else {
-                        // Top-K：保留最强 K 个
                         pushTopK(candidates, Candidate(cx, cy, score, rI, gI, bI), k)
                     }
                 } else {
+                    // 绿色模式仍保留你原来的“绿相对强度”逻辑
                     val greenIntensity = calculateRegionGreenIntensityFast(
                         pixels = pixels,
                         bmpWidth = width,
@@ -425,7 +484,6 @@ class BrightSpotDetector {
 
         if (candidates.isEmpty()) return emptyList()
 
-        // 只 refine 候选
         val refineRadius = calcRefineRadius()
         val refinedSpots = ArrayList<BrightSpot>(candidates.size)
 
@@ -436,7 +494,7 @@ class BrightSpotDetector {
                     c.g >= c.r && c.g >= c.b -> LedColor.GREEN
                     else -> LedColor.BLUE
                 }
-                val refined = refineSpotCenterIterativeFast(
+                val refined = refineSpotCenterIterativeFastHSV(
                     pixels = pixels,
                     bmpWidth = width,
                     bmpHeight = height,
@@ -456,7 +514,7 @@ class BrightSpotDetector {
                     )
                 )
             } else {
-                val refined = refineSpotCenterIterativeFast(
+                val refined = refineSpotCenterIterativeFastRGB(
                     pixels = pixels,
                     bmpWidth = width,
                     bmpHeight = height,
@@ -475,18 +533,102 @@ class BrightSpotDetector {
             }
         }
 
-        // 小数量直接取 top（避免 merge 的 O(n^2)）
         if (!detectColoredLeds && maxSpots != null && maxSpots in 1..3) {
             return refinedSpots.sortedByDescending { it.brightness }.take(maxSpots)
         }
 
-        // 常规 merge（你原逻辑）
         val minDistance = (stepX.coerceAtLeast(stepY) * 1.5f)
         val merged = mergeNearbySpots(refinedSpots, minDistance)
         val sorted = merged.sortedByDescending { it.brightness }
         return if (maxSpots != null && maxSpots > 0) sorted.take(maxSpots) else sorted
     }
 
+    // ===== HSV 版区域强度：返回 (目标1, 目标2, 目标3) 强度 =====
+    private fun calculateHSVIntensitiesFast(
+        pixels: IntArray,
+        bmpWidth: Int,
+        bmpHeight: Int,
+        centerX: Int,
+        centerY: Int,
+        radiusX: Int,
+        radiusY: Int
+    ): Triple<Float, Float, Float>? {
+        val startX = (centerX - radiusX).coerceAtLeast(0)
+        val endX = (centerX + radiusX).coerceAtMost(bmpWidth - 1)
+        val startY = (centerY - radiusY).coerceAtLeast(0)
+        val endY = (centerY + radiusY).coerceAtMost(bmpHeight - 1)
+
+        // 1) 找区域内最大亮度（RGB和）
+        var maxBrightness = 0f
+        for (y in startY..endY) {
+            val base = y * bmpWidth
+            for (x in startX..endX) {
+                val p = pixels[base + x]
+                val r = ((p shr 16) and 0xFF).toFloat()
+                val g = ((p shr 8) and 0xFF).toFloat()
+                val b = (p and 0xFF).toFloat()
+                val br = r + g + b
+                if (br > maxBrightness) maxBrightness = br
+            }
+        }
+        if (maxBrightness <= 0f) return null
+
+        // 2) 动态阈值：只取最亮的一撮像素
+        val dynThreshold = max(dynamicThresholdMin, maxBrightness * 0.7f)
+
+        var totalR = 0f
+        var totalG = 0f
+        var totalB = 0f
+        var count = 0
+
+        for (y in startY..endY) {
+            val base = y * bmpWidth
+            for (x in startX..endX) {
+                val p = pixels[base + x]
+                val r = ((p shr 16) and 0xFF).toFloat()
+                val g = ((p shr 8) and 0xFF).toFloat()
+                val b = (p and 0xFF).toFloat()
+                val br = r + g + b
+                if (br >= dynThreshold) {
+                    totalR += r
+                    totalG += g
+                    totalB += b
+                    count++
+                }
+            }
+        }
+
+        if (count < minPixelCount) return null
+
+        // 3) 面积过滤：亮像素太多 => 大块亮色
+        val regionW = (endX - startX + 1)
+        val regionH = (endY - startY + 1)
+        val regionArea = regionW * regionH
+        val maxAllowed = max(
+            maxBrightPixelCountMin,
+            (regionArea * maxBrightPixelRatio).toInt()
+        )
+        if (count > maxAllowed) return null
+
+        // 4) 区域平均颜色 + 总亮度门槛
+        val avgR = totalR / count
+        val avgG = totalG / count
+        val avgB = totalB / count
+        val totalBrightness = avgR + avgG + avgB
+        if (totalBrightness < minTotalBrightness) return null
+
+        // 5) 转 HSV，算到三个目标颜色的相似度，再乘亮度得到“强度”
+        val hsv = FloatArray(3)
+        Color.RGBToHSV(clamp255(avgR), clamp255(avgG), clamp255(avgB), hsv)
+
+        val simR = hsvSimilarity(hsv, targetRedHSV)
+        val simG = hsvSimilarity(hsv, targetGreenHSV)
+        val simB = hsvSimilarity(hsv, targetBlueHSV)
+
+        return Triple(simR * totalBrightness, simG * totalBrightness, simB * totalBrightness)
+    }
+
+    // ===== 绿色模式保留（你的原逻辑）=====
     private fun calculateRegionGreenIntensityFast(
         pixels: IntArray,
         bmpWidth: Int,
@@ -514,232 +656,84 @@ class BrightSpotDetector {
         return if (pixelCount > 0) totalGreenIntensity / pixelCount else 0f
     }
 
-    /**
-     * 计算单个像素的绿色强度
-     * 方法：绿色值要明显高于红色和蓝色的平均值
-     * 绿色强度 = Green - (Red + Blue) / 2
-     * 这样可以突出显示真正的绿色，而不是白色（RGB都高）或其他颜色
-     */
     private fun calculatePixelGreenIntensity(pixel: Int): Float {
         val red = (pixel shr 16) and 0xFF
         val green = (pixel shr 8) and 0xFF
         val blue = pixel and 0xFF
-
-        // 计算绿色的相对强度
-        // 绿色值必须明显高于红色和蓝色的平均值
         val otherAverage = (red + blue) / 2f
         val greenIntensity = green - otherAverage
-
-        // 同时要求绿色值本身要足够高（至少50）
-        // 避免检测到暗绿色或噪点
-        return if (green >= 50 && greenIntensity > 0) {
-            greenIntensity
-        } else {
-            0f
-        }
+        return if (green >= 50 && greenIntensity > 0) greenIntensity else 0f
     }
 
-    /**
-     * 计算区域的RGB三种颜色强度
-     * @return Triple(红色强度, 绿色强度, 蓝色强度) 或 null（太暗）
-     */
-    private fun calculateRGBIntensities(
-        bitmap: Bitmap,
-        centerX: Int,
-        centerY: Int,
-        radiusX: Int,
-        radiusY: Int
-    ): Triple<Float, Float, Float>? {
-        val startX = (centerX - radiusX).coerceAtLeast(0)
-        val endX = (centerX + radiusX).coerceAtMost(bitmap.width - 1)
-        val startY = (centerY - radiusY).coerceAtLeast(0)
-        val endY = (centerY + radiusY).coerceAtMost(bitmap.height - 1)
-
-        // 收集所有像素，只保留足够亮的像素（LED特征）
-        val brightPixels = mutableListOf<Triple<Float, Float, Float>>()
-
-        for (x in startX..endX) {
-            for (y in startY..endY) {
-                val pixel = bitmap[x, y]
-                val r = ((pixel shr 16) and 0xFF).toFloat()
-                val g = ((pixel shr 8) and 0xFF).toFloat()
-                val b = (pixel and 0xFF).toFloat()
-
-                // 只收集足够亮的像素，过滤背景
-                val brightness = r + g + b
-                if (brightness > minPixelBrightness) {
-                    brightPixels.add(Triple(r, g, b))
-                }
-            }
-        }
-
-        // 如果亮像素太少，说明这个区域没有LED
-        if (brightPixels.size < minPixelCount) return null
-
-        // 取最亮的前30%像素的平均值
-        // 这样可以排除边缘的暗像素，只关注LED中心
-        val sortedByBrightness = brightPixels.sortedByDescending { it.first + it.second + it.third }
-        val topCount = maxOf(3, (sortedByBrightness.size * 0.3).toInt())
-        val topPixels = sortedByBrightness.take(topCount)
-
-        var totalRed = 0f
-        var totalGreen = 0f
-        var totalBlue = 0f
-
-        topPixels.forEach { (r, g, b) ->
-            totalRed += r
-            totalGreen += g
-            totalBlue += b
-        }
-
-        val avgRed = totalRed / topPixels.size
-        val avgGreen = totalGreen / topPixels.size
-        val avgBlue = totalBlue / topPixels.size
-
-        // 计算总亮度
-        val totalBrightness = avgRed + avgGreen + avgBlue
-        if (totalBrightness < minTotalBrightness) {  // 亮度要求，确保是LED
-            return null
-        }
-
-        // 计算三种颜色的相对强度（归一化色度空间）
-        val sum = avgRed + avgGreen + avgBlue
-        val r = avgRed / sum
-        val g = avgGreen / sum
-        val b = avgBlue / sum
-
-        // 计算每种颜色的纯度分数
-        // 红色强度 = 红色占比 × 绝对亮度
-        val redIntensity = r * avgRed
-
-        // 绿色强度 = 绿色占比 × 绝对亮度
-        val greenIntensity = g * avgGreen
-
-        // 蓝色强度 = 蓝色占比 × 绝对亮度
-        val blueIntensity = b * avgBlue
-
-        return Triple(redIntensity, greenIntensity, blueIntensity)
-    }
-
-    private fun calculateRGBIntensitiesFast(
+    // ===== refine：HSV 版（按目标颜色相似度做权重质心）=====
+    private fun refineSpotCenterFastHSV(
         pixels: IntArray,
         bmpWidth: Int,
         bmpHeight: Int,
         centerX: Int,
         centerY: Int,
-        radiusX: Int,
-        radiusY: Int,
-        calibration: ColorCalibration?
-    ): Triple<Float, Float, Float>? {
-        val startX = (centerX - radiusX).coerceAtLeast(0)
-        val endX = (centerX + radiusX).coerceAtMost(bmpWidth - 1)
-        val startY = (centerY - radiusY).coerceAtLeast(0)
-        val endY = (centerY + radiusY).coerceAtMost(bmpHeight - 1)
-        var maxBrightness = 0f
+        radius: Int,
+        preferChannel: LedColor
+    ): Offset {
+        val startX = (centerX - radius).coerceAtLeast(0)
+        val endX = (centerX + radius).coerceAtMost(bmpWidth - 1)
+        val startY = (centerY - radius).coerceAtLeast(0)
+        val endY = (centerY + radius).coerceAtMost(bmpHeight - 1)
+
+        val target = if (preferChannel == LedColor.UNKNOWN) null else getTargetHSV(preferChannel)
+        val hsv = FloatArray(3)
+
+        var sumW = 0f
+        var sumX = 0f
+        var sumY = 0f
+
         for (y in startY..endY) {
             val base = y * bmpWidth
             for (x in startX..endX) {
                 val p = pixels[base + x]
-                val r = ((p shr 16) and 0xFF).toFloat()
-                val g = ((p shr 8) and 0xFF).toFloat()
-                val b = (p and 0xFF).toFloat()
-                val br = r + g + b
-                if (br > maxBrightness) maxBrightness = br
-            }
-        }
-        if (maxBrightness <= 0f) return null
-        val dynThreshold = kotlin.math.max(dynamicThresholdMin, maxBrightness * 0.7f)
-        var totalRed = 0f
-        var totalGreen = 0f
-        var totalBlue = 0f
-        var count = 0
-        for (y in startY..endY) {
-            val base = y * bmpWidth
-            for (x in startX..endX) {
-                val p = pixels[base + x]
-                val r = ((p shr 16) and 0xFF).toFloat()
-                val g = ((p shr 8) and 0xFF).toFloat()
-                val b = (p and 0xFF).toFloat()
-                val br = r + g + b
-                if (br >= dynThreshold) {
-                    totalRed += r
-                    totalGreen += g
-                    totalBlue += b
-                    count++
+                val r = ((p shr 16) and 0xFF)
+                val g = ((p shr 8) and 0xFF)
+                val b = (p and 0xFF)
+
+                Color.RGBToHSV(r, g, b, hsv)
+
+                // 权重：相似度 × 亮度（HSV V）
+                val w = if (target != null) {
+                    val sim = hsvSimilarity(hsv, target)
+                    sim * hsv[2] // v in 0..1
+                } else {
+                    // UNKNOWN：用亮度权重（避免全丢）
+                    hsv[2]
+                }
+
+                if (w > 0f) {
+                    sumW += w
+                    sumX += w * x
+                    sumY += w * y
                 }
             }
         }
-        if (count < minPixelCount) return null
 
-        val regionW = (endX - startX + 1)
-        val regionH = (endY - startY + 1)
-        val regionArea = regionW * regionH
-        val maxAllowed = kotlin.math.max(
-            maxBrightPixelCountMin,
-            (regionArea * maxBrightPixelRatio).toInt()
-        )
-        if (count > maxAllowed) return null
-
-        val avgRed = totalRed / count
-        val avgGreen = totalGreen / count
-        val avgBlue = totalBlue / count
-        val totalBrightness = avgRed + avgGreen + avgBlue
-        if (totalBrightness < minTotalBrightness) return null
-        if (calibration == null) {
-            val sum = avgRed + avgGreen + avgBlue
-            val r = avgRed / sum
-            val g = avgGreen / sum
-            val b = avgBlue / sum
-            val redIntensity = r * avgRed
-            val greenIntensity = g * avgGreen
-            val blueIntensity = b * avgBlue
-            return Triple(redIntensity, greenIntensity, blueIntensity)
-        } else {
-            val norm = avgRed + avgGreen + avgBlue
-            val rNorm = avgRed / norm
-            val gNorm = avgGreen / norm
-            val bNorm = avgBlue / norm
-            val (calR, calG, calB) = calibration.redColor
-            val calRedNorm = calR + calG + calB
-            val redDistance = kotlin.math.sqrt(
-                (rNorm - calR / calRedNorm) * (rNorm - calR / calRedNorm) +
-                        (gNorm - calG / calRedNorm) * (gNorm - calG / calRedNorm) +
-                        (bNorm - calB / calRedNorm) * (bNorm - calB / calRedNorm)
-            )
-            val redSimilarity = kotlin.math.exp(-redDistance * 8f)
-            val (calGR, calGG, calGB) = calibration.greenColor
-            val calGreenNorm = calGR + calGG + calGB
-            val greenDistance = kotlin.math.sqrt(
-                (rNorm - calGR / calGreenNorm) * (rNorm - calGR / calGreenNorm) +
-                        (gNorm - calGG / calGreenNorm) * (gNorm - calGG / calGreenNorm) +
-                        (bNorm - calGB / calGreenNorm) * (bNorm - calGB / calGreenNorm)
-            )
-            val greenSimilarity = kotlin.math.exp(-greenDistance * 8f)
-            val (calBR, calBG, calBB) = calibration.blueColor
-            val calBlueNorm = calBR + calBG + calBB
-            val blueDistance = kotlin.math.sqrt(
-                (rNorm - calBR / calBlueNorm) * (rNorm - calBR / calBlueNorm) +
-                        (gNorm - calBG / calBlueNorm) * (gNorm - calBG / calBlueNorm) +
-                        (bNorm - calBB / calBlueNorm) * (bNorm - calBB / calBlueNorm)
-            )
-            val blueSimilarity = kotlin.math.exp(-blueDistance * 8f)
-            return Triple(
-                if (redSimilarity > 0.3f) redSimilarity * totalBrightness else 0f,
-                if (greenSimilarity > 0.3f) greenSimilarity * totalBrightness else 0f,
-                if (blueSimilarity > 0.3f) blueSimilarity * totalBrightness else 0f
-            )
-        }
+        return if (sumW > 0f) Offset(sumX / sumW, sumY / sumW) else Offset(centerX.toFloat(), centerY.toFloat())
     }
 
-    /**
-     * 使用强度加权质心细化亮点中心，支持按指定颜色通道加权。
-     * 权重选择：
-     *  - GREEN: g - (r + b)/2
-     *  - RED:   r - (g + b)/2
-     *  - BLUE:  b - (r + g)/2
-     * 否则使用总亮度 r+g+b。权重小于0的像素被忽略。
-     */
-    private fun refineSpotCenterFast(
+    private fun refineSpotCenterIterativeFastHSV(
+        pixels: IntArray,
+        bmpWidth: Int,
+        bmpHeight: Int,
+        centerX: Int,
+        centerY: Int,
+        radius: Int,
+        preferChannel: LedColor
+    ): Offset {
+        val first = refineSpotCenterFastHSV(pixels, bmpWidth, bmpHeight, centerX, centerY, radius, preferChannel)
+        val cx = first.x.toInt().coerceIn(0, bmpWidth - 1)
+        val cy = first.y.toInt().coerceIn(0, bmpHeight - 1)
+        return refineSpotCenterFastHSV(pixels, bmpWidth, bmpHeight, cx, cy, radius, preferChannel)
+    }
+
+    // ===== refine：RGB 版（仅给绿色模式沿用）=====
+    private fun refineSpotCenterFastRGB(
         pixels: IntArray,
         bmpWidth: Int,
         bmpHeight: Int,
@@ -778,11 +772,7 @@ class BrightSpotDetector {
         return if (sumW > 0f) Offset(sumX / sumW, sumY / sumW) else Offset(centerX.toFloat(), centerY.toFloat())
     }
 
-    /**
-     * 两次迭代细化：先在初始中心做一次强度质心，再以新中心重复一次，
-     * 对于亮斑半径大于区块尺寸时更稳健。
-     */
-    private fun refineSpotCenterIterativeFast(
+    private fun refineSpotCenterIterativeFastRGB(
         pixels: IntArray,
         bmpWidth: Int,
         bmpHeight: Int,
@@ -791,56 +781,36 @@ class BrightSpotDetector {
         radius: Int,
         preferChannel: LedColor
     ): Offset {
-        val first = refineSpotCenterFast(pixels, bmpWidth, bmpHeight, centerX, centerY, radius, preferChannel)
+        val first = refineSpotCenterFastRGB(pixels, bmpWidth, bmpHeight, centerX, centerY, radius, preferChannel)
         val cx = first.x.toInt().coerceIn(0, bmpWidth - 1)
         val cy = first.y.toInt().coerceIn(0, bmpHeight - 1)
-        val second = refineSpotCenterFast(pixels, bmpWidth, bmpHeight, cx, cy, radius, preferChannel)
-        return second
+        return refineSpotCenterFastRGB(pixels, bmpWidth, bmpHeight, cx, cy, radius, preferChannel)
     }
 
-    /**
-     * 从所有候选点中选择最红、最绿、最蓝的三个点
-     * 遍历整个画面，找到红色强度最大、绿色强度最大、蓝色强度最大的三个位置
-     */
+    // =====（可选）旧的 selectBestRGBPoints 保留：字段名仍叫 red/green/blue，但语义是“目标1/2/3”=====
     private fun selectBestRGBPoints(spots: List<BrightSpot>): List<BrightSpot> {
-        if (spots.isEmpty()) {
-            return emptyList()
-        }
+        if (spots.isEmpty()) return emptyList()
 
-        // 找出红色强度最大的点
         val redSpot = spots.maxByOrNull { it.redIntensity }
-        val redPoint = redSpot?.copy(
-            color = LedColor.RED,
-            brightness = redSpot.redIntensity
-        )
+        val redPoint = redSpot?.copy(color = LedColor.RED, brightness = redSpot.redIntensity)
 
-        // 找出绿色强度最大的点
         val greenSpot = spots.maxByOrNull { it.greenIntensity }
-        val greenPoint = greenSpot?.copy(
-            color = LedColor.GREEN,
-            brightness = greenSpot.greenIntensity
-        )
+        val greenPoint = greenSpot?.copy(color = LedColor.GREEN, brightness = greenSpot.greenIntensity)
 
-        // 找出蓝色强度最大的点
         val blueSpot = spots.maxByOrNull { it.blueIntensity }
-        val bluePoint = blueSpot?.copy(
-            color = LedColor.BLUE,
-            brightness = blueSpot.blueIntensity
-        )
+        val bluePoint = blueSpot?.copy(color = LedColor.BLUE, brightness = blueSpot.blueIntensity)
 
-        // 返回三个点（按红、绿、蓝顺序）
         val result = mutableListOf<BrightSpot>()
         if (redPoint != null) result.add(redPoint)
         if (greenPoint != null) result.add(greenPoint)
         if (bluePoint != null) result.add(bluePoint)
-
         return result
     }
 
-
     /**
-     * 在圆形区域内搜索最红、最绿、最蓝的点作为校准颜色
-     * 使用与检测算法完全相同的逻辑，确保一致性
+     * 在圆形区域内搜索三个目标颜色的最强点（用于校准或辅助）
+     * - 若 calibration 已设置：按 HSV 相似度直接找三个目标
+     * - 若 calibration 未设置：退化为默认三目标（近似 RGB 三原色，仅兜底）
      */
     fun findRGBColorsInCircle(
         bitmap: Bitmap,
@@ -858,7 +828,8 @@ class BrightSpotDetector {
         val h = bitmap.height
         if (w <= 1 || h <= 1) return null
 
-        // 一次性读像素（关键）
+        ensureTargetsPrepared()
+
         val pixels = IntArray(w * h)
         try {
             bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
@@ -877,7 +848,6 @@ class BrightSpotDetector {
         val sampleStep = 10
         val sampleRadius = 15
 
-        // 扫描圆内采样点
         val yStart = (centerY - radius).coerceAtLeast(sampleRadius)
         val yEnd = (centerY + radius).coerceAtMost(h - 1 - sampleRadius)
         val xStart0 = (centerX - radius).coerceAtLeast(sampleRadius)
@@ -887,21 +857,19 @@ class BrightSpotDetector {
 
         for (y in yStart..yEnd step sampleStep) {
             if (bitmap.isRecycled) return null
-
             val dy = (y - centerY).toFloat()
             for (x in xStart0..xEnd0 step sampleStep) {
                 val dx = (x - centerX).toFloat()
                 if (dx * dx + dy * dy > radiusSq) continue
 
-                val intensities = calculateRGBIntensitiesFast(
+                val intensities = calculateHSVIntensitiesFast(
                     pixels = pixels,
                     bmpWidth = w,
                     bmpHeight = h,
                     centerX = x,
                     centerY = y,
                     radiusX = sampleRadius,
-                    radiusY = sampleRadius,
-                    calibration = null // 校准阶段先用原始判别更稳；你也可以传 calibration
+                    radiusY = sampleRadius
                 ) ?: continue
 
                 val rI = intensities.first
@@ -923,27 +891,27 @@ class BrightSpotDetector {
             }
         }
 
-        android.util.Log.d("ColorSearch", "搜索结果 - 红:$bestR 绿:$bestG 蓝:$bestB")
+        android.util.Log.d("ColorSearch", "搜索结果(HSV) - 目标1:$bestR 目标2:$bestG 目标3:$bestB")
 
         if (bestRPos == null || bestGPos == null || bestBPos == null) {
             android.util.Log.e(
                 "ColorSearch",
-                "未找到完整RGB！红:${bestRPos != null} 绿:${bestGPos != null} 蓝:${bestBPos != null}"
+                "未找到完整三色！1:${bestRPos != null} 2:${bestGPos != null} 3:${bestBPos != null}"
             )
             return null
         }
 
-        val redColor = sampleColorAt(bitmap, bestRPos.first, bestRPos.second, radius = 20)
-        val greenColor = sampleColorAt(bitmap, bestGPos.first, bestGPos.second, radius = 20)
-        val blueColor = sampleColorAt(bitmap, bestBPos.first, bestBPos.second, radius = 20)
+        val c1 = sampleColorAt(bitmap, bestRPos.first, bestRPos.second, radius = 20)
+        val c2 = sampleColorAt(bitmap, bestGPos.first, bestGPos.second, radius = 20)
+        val c3 = sampleColorAt(bitmap, bestBPos.first, bestBPos.second, radius = 20)
 
-        android.util.Log.d("ColorSearch", "找到的位置 - 红:$bestRPos 绿:$bestGPos 蓝:$bestBPos")
-        return Triple(redColor, greenColor, blueColor)
+        android.util.Log.d("ColorSearch", "找到的位置 - 1:$bestRPos 2:$bestGPos 3:$bestBPos")
+        return Triple(c1, c2, c3)
     }
 
     /**
      * 采样指定位置的颜色值（用于校准）
-     * 关键改进：只采样区域内最亮的像素，避免被背景色稀释
+     * 只采样区域内最亮的像素，避免被背景色稀释
      */
     fun sampleColorAt(
         bitmap: Bitmap,
@@ -962,7 +930,6 @@ class BrightSpotDetector {
         val startY = (y - radius).coerceAtLeast(0)
         val endY = (y + radius).coerceAtMost(h - 1)
 
-        // 先找最大亮度（只考虑亮像素）
         var maxBr = 0f
         for (py in startY..endY) {
             for (px in startX..endX) {
@@ -976,9 +943,8 @@ class BrightSpotDetector {
         }
         if (maxBr <= 0f) return Triple(0f, 0f, 0f)
 
-        // 取“最亮 topPercent”的阈值（和你原来 top20% 的意图一致）
         val topPercent = 0.2f
-        val brightGate = kotlin.math.max(minPixelBrightness, maxBr * (1f - topPercent))
+        val brightGate = max(minPixelBrightness, maxBr * (1f - topPercent))
 
         var sumR = 0f
         var sumG = 0f
@@ -1001,15 +967,11 @@ class BrightSpotDetector {
             }
         }
 
-        return if (count > 0) {
-            Triple(sumR / count, sumG / count, sumB / count)
-        } else {
-            Triple(0f, 0f, 0f)
-        }
+        return if (count > 0) Triple(sumR / count, sumG / count, sumB / count) else Triple(0f, 0f, 0f)
     }
 
     /**
-     * 合并距离较近的绿色亮点
+     * 合并距离较近的亮点（保持你原逻辑）
      */
     private fun mergeNearbySpots(
         spots: List<BrightSpot>,
@@ -1018,35 +980,28 @@ class BrightSpotDetector {
         if (spots.isEmpty() || spots.size == 1) return spots
         if (minDistance <= 0f) return spots
 
-        // 用 minDistance 作为 cellSize，保证：两点距离 < minDistance => cell 坐标差 <= 1
         val cellSize = minDistance
         val invCell = 1f / cellSize
         val minDist2 = minDistance * minDistance
 
-        // 轻量 IntList，避免 MutableList<Int> 产生大量装箱和对象
         class IntList(initialCapacity: Int = 8) {
             private var a = IntArray(initialCapacity)
             var size: Int = 0
                 private set
-
             fun add(v: Int) {
                 if (size == a.size) a = a.copyOf(a.size * 2)
                 a[size++] = v
             }
-
             operator fun get(i: Int): Int = a[i]
         }
 
         fun key(cx: Int, cy: Int): Long {
-            // pack two Int into one Long
             return (cx.toLong() shl 32) or (cy.toLong() and 0xffffffffL)
         }
 
-        // 1) 建桶：cell -> indices
         val buckets = HashMap<Long, IntList>(spots.size * 2)
         for (i in spots.indices) {
             val p = spots[i].position
-            // p.x/p.y 均为正坐标时 toInt 等价 floor
             val cx = (p.x * invCell).toInt()
             val cy = (p.y * invCell).toInt()
             val k = key(cx, cy)
@@ -1060,7 +1015,6 @@ class BrightSpotDetector {
             }
         }
 
-        // 2) 合并：只检查 seed 周围 3x3 cell，避免 O(n^2)
         val used = BooleanArray(spots.size)
         val merged = ArrayList<BrightSpot>(spots.size)
 
@@ -1078,11 +1032,9 @@ class BrightSpotDetector {
             var sumY = sp.y
             var count = 1
 
-            // 用簇内“最亮”的 spot 当代表，保留它的 color / RGB 强度字段
             var bestIdx = i
             var bestBrightness = seed.brightness
 
-            // 只扫周围 9 个格子
             for (cy in (seedCy - 1)..(seedCy + 1)) {
                 for (cx in (seedCx - 1)..(seedCx + 1)) {
                     val list = buckets[key(cx, cy)] ?: continue
@@ -1111,22 +1063,10 @@ class BrightSpotDetector {
 
             val avgX = sumX / count
             val avgY = sumY / count
-
             val best = spots[bestIdx]
-
-            // 保留 best 的颜色/强度，只更新位置和 brightness
             merged.add(best.copy(position = Offset(avgX, avgY), brightness = bestBrightness))
         }
 
         return merged
     }
-    /**
-     * 计算两点之间的距离
-     */
-    private fun calculateDistance(p1: Offset, p2: Offset): Float {
-        val dx = p1.x - p2.x
-        val dy = p1.y - p2.y
-        return kotlin.math.sqrt(dx * dx + dy * dy)
-    }
 }
-

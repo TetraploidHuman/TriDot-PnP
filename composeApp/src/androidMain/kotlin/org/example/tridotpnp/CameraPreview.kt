@@ -33,6 +33,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import androidx.core.graphics.scale
+import kotlin.math.max
+import kotlin.math.min
 
 @androidx.camera.camera2.interop.ExperimentalCamera2Interop
 @OptIn(ExperimentalCamera2Interop::class)
@@ -1263,164 +1265,140 @@ private fun processImage(
             Triple(centerX * workingScale, centerY * workingScale, radius * workingScale)
         } else null
 
-        val (spotsScaled, foundInManualRoi) = when {
-            manualRoi != null -> {
-                // 手动ROI优先
-                var roiLeft = (manualRoi.left * workingScale).toInt()
-                var roiTop = (manualRoi.top * workingScale).toInt()
-                var roiRight = (manualRoi.right * workingScale).toInt()
-                var roiBottom = (manualRoi.bottom * workingScale).toInt()
+        var lastTriRadius: Float? = null // 上一帧三色点外接圆半径，用于判断移动过大
+        val (spotsScaled, foundInManualRoi) = if (manualRoi != null) {
+            // 手动ROI逻辑保持不变
+            val roiLeftOrig = manualRoi.left
+            val roiTopOrig = manualRoi.top
+            val roiRightOrig = manualRoi.right
+            val roiBottomOrig = manualRoi.bottom
+            val workingWidth = workingBitmap.width
+            val workingHeight = workingBitmap.height
 
-                limitRegionWorking?.let {
-                    roiLeft = kotlin.math.max(roiLeft, it.left)
-                    roiTop = kotlin.math.max(roiTop, it.top)
-                    roiRight = kotlin.math.min(roiRight, it.right)
-                    roiBottom = kotlin.math.min(roiBottom, it.bottom)
+            var roiLeft = (roiLeftOrig * workingScale).toInt().coerceIn(0, workingWidth - 1)
+            var roiTop = (roiTopOrig * workingScale).toInt().coerceIn(0, workingHeight - 1)
+            var roiRight = (roiRightOrig * workingScale).toInt().coerceAtLeast(roiLeft + 1).coerceAtMost(workingWidth - 1)
+            var roiBottom = (roiBottomOrig * workingScale).toInt().coerceAtLeast(roiTop + 1).coerceAtMost(workingHeight - 1)
+
+            // 与限制区域取交集
+            if (limitRegionWorking != null) {
+                roiLeft = maxOf(roiLeft, limitRegionWorking.left)
+                roiTop = maxOf(roiTop, limitRegionWorking.top)
+                roiRight = minOf(roiRight, limitRegionWorking.right)
+                roiBottom = minOf(roiBottom, limitRegionWorking.bottom)
+                if (roiRight <= roiLeft || roiBottom <= roiTop) {
+                    roiLeft = limitRegionWorking.left
+                    roiTop = limitRegionWorking.top
+                    roiRight = limitRegionWorking.right
+                    roiBottom = limitRegionWorking.bottom
+                }
+            }
+
+            onRoiInfo?.invoke(null)
+
+            val manualRoiSpots = detector.detectBrightSpots(
+                bitmap = workingBitmap,
+                threshold = 80f,
+                gridSize = gridSize,
+                maxSpots = maxSpots,
+                detectColoredLeds = (maxSpots == 3),
+                roiLeft = roiLeft,
+                roiTop = roiTop,
+                roiRight = roiRight,
+                roiBottom = roiBottom
+            )
+
+            val foundFlag = manualRoiSpots.size == 3 && maxSpots == 3
+            Pair(manualRoiSpots, foundFlag)
+
+        } else if (initialRoiInfo != null && maxSpots == 3) {
+            // ROI 扩展 + 三色点稳定性判断
+            val (centerX, centerY, initialRoiRadius) = initialRoiInfo
+            var currentRadius = initialRoiRadius
+            val workingWidth = workingBitmap.width
+            val workingHeight = workingBitmap.height
+            val maxRadiusLimit = limitRegionWorking?.let {
+                maxOf(it.right - it.left, it.bottom - it.top) * 0.5f
+            }
+            val maxAllowedRadius = min(max(workingWidth, workingHeight) * 0.4f, maxRadiusLimit ?: Float.MAX_VALUE)
+
+            var foundSpots: List<BrightSpot>? = null
+            var finalRoiInfo: RoiVisualizationInfo? = null
+            var expansionCount = 0
+            val maxExpansions = 10
+
+            while (foundSpots == null && currentRadius <= maxAllowedRadius && expansionCount < maxExpansions) {
+                var roiLeft = (centerX - currentRadius).toInt().coerceAtLeast(0)
+                var roiTop = (centerY - currentRadius).toInt().coerceAtLeast(0)
+                var roiRight = (centerX + currentRadius).toInt().coerceAtMost(workingWidth - 1)
+                var roiBottom = (centerY + currentRadius).toInt().coerceAtMost(workingHeight - 1)
+
+                // 与限制区域取交集
+                if (limitRegionWorking != null) {
+                    roiLeft = maxOf(roiLeft, limitRegionWorking.left)
+                    roiTop = maxOf(roiTop, limitRegionWorking.top)
+                    roiRight = minOf(roiRight, limitRegionWorking.right)
+                    roiBottom = minOf(roiBottom, limitRegionWorking.bottom)
                     if (roiRight <= roiLeft || roiBottom <= roiTop) {
-                        roiLeft = it.left
-                        roiTop = it.top
-                        roiRight = it.right
-                        roiBottom = it.bottom
+                        currentRadius *= 1.3f
+                        expansionCount++
+                        continue
                     }
                 }
 
-                onRoiInfo?.invoke(null) // 手动ROI不显示自动ROI
-
-                val manualSpots = detector.detectBrightSpots(
+                val roiSpots = detector.detectBrightSpots(
                     bitmap = workingBitmap,
                     threshold = 80f,
                     gridSize = gridSize,
                     maxSpots = maxSpots,
-                    detectColoredLeds = (maxSpots == 3),
+                    detectColoredLeds = true,
                     roiLeft = roiLeft,
                     roiTop = roiTop,
                     roiRight = roiRight,
                     roiBottom = roiBottom
                 )
-                val foundFlag = manualSpots.size == 3 && maxSpots == 3
-                Pair(manualSpots, foundFlag)
-            }
 
-            initialRoiInfo != null && maxSpots == 3 -> {
-                // ROI锁定+异常检测+逐步扩大
-                val (centerX, centerY, initialRadius) = initialRoiInfo
-                var currentRadius = initialRadius
-                val maxRadiusLimit = limitRegionWorking?.let { kotlin.math.max(it.right - it.left, it.bottom - it.top) * 0.5f }
-                val maxAllowedRadius = kotlin.math.min(kotlin.math.max(workingBitmap.width, workingBitmap.height) * 0.4f, maxRadiusLimit ?: Float.MAX_VALUE)
+                // 三色点稳定性判断
+                val isStable = if (roiSpots.size == 3 && lastTriRadius != null) {
+                    val currRadius = calculateCircumradius(roiSpots[0].position, roiSpots[1].position, roiSpots[2].position)
+                    val changeRatio = kotlin.math.abs(currRadius - lastTriRadius) / lastTriRadius
+                    changeRatio <= 0.3f
+                } else roiSpots.size == 3
 
-                var foundSpots: List<BrightSpot>? = null
-                var expansionCount = 0
-                val maxExpansions = 10
-                var lastSpotsScaled: Triple<Offset, Offset, Offset>? = null
-                var finalRoiInfo: RoiVisualizationInfo? = null
-
-                while (foundSpots == null && currentRadius <= maxAllowedRadius && expansionCount < maxExpansions) {
-                    var roiLeft = (centerX - currentRadius).toInt().coerceAtLeast(0)
-                    var roiTop = (centerY - currentRadius).toInt().coerceAtLeast(0)
-                    var roiRight = (centerX + currentRadius).toInt().coerceAtMost(workingBitmap.width - 1)
-                    var roiBottom = (centerY + currentRadius).toInt().coerceAtMost(workingBitmap.height - 1)
-
-                    if (limitRegionWorking != null) {
-                        roiLeft = kotlin.math.max(roiLeft, limitRegionWorking.left)
-                        roiTop = kotlin.math.max(roiTop, limitRegionWorking.top)
-                        roiRight = kotlin.math.min(roiRight, limitRegionWorking.right)
-                        roiBottom = kotlin.math.min(roiBottom, limitRegionWorking.bottom)
-                        if (roiRight <= roiLeft || roiBottom <= roiTop) {
-                            currentRadius *= 1.3f
-                            expansionCount++
-                            continue
-                        }
-                    }
-
-                    val roiSpots = detector.detectBrightSpots(
-                        bitmap = workingBitmap,
-                        threshold = 80f,
-                        gridSize = gridSize,
-                        maxSpots = maxSpots,
-                        detectColoredLeds = true,
-                        roiLeft = roiLeft,
-                        roiTop = roiTop,
-                        roiRight = roiRight,
-                        roiBottom = roiBottom
-                    )
-
-                    // 检查稳定性
-                    var unstable = false
-                    if (roiSpots.size == 3 && lastSpotsScaled != null) {
-                        val spotsMap = roiSpots.associateBy { it.color }
-                        val r = spotsMap[LedColor.RED]?.position
-                        val g = spotsMap[LedColor.GREEN]?.position
-                        val b = spotsMap[LedColor.BLUE]?.position
-                        if (r != null && g != null && b != null) {
-                            val (lastR, lastG, lastB) = lastSpotsScaled
-                            val meanDist = ((r - lastR).getDistance() + (g - lastG).getDistance() + (b - lastB).getDistance()) / 3f
-                            if (meanDist > currentRadius * 0.5f) unstable = true
-                        }
-                    }
-
+                if (roiSpots.size == 3 && isStable) {
+                    foundSpots = roiSpots
                     val originalRoiLeft = roiLeft / workingScale
                     val originalRoiTop = roiTop / workingScale
                     val originalRoiRight = roiRight / workingScale
                     val originalRoiBottom = roiBottom / workingScale
-
-                    if (roiSpots.size == 3 && !unstable) {
-                        foundSpots = roiSpots
-                        lastSpotsScaled = Triple(
-                            roiSpots.first { it.color == LedColor.RED }.position,
-                            roiSpots.first { it.color == LedColor.GREEN }.position,
-                            roiSpots.first { it.color == LedColor.BLUE }.position
-                        )
-                        finalRoiInfo = RoiVisualizationInfo(
-                            left = originalRoiLeft,
-                            top = originalRoiTop,
-                            right = originalRoiRight,
-                            bottom = originalRoiBottom,
-                            expansionCount = expansionCount,
-                            found = true
-                        )
-                    } else {
-                        finalRoiInfo = RoiVisualizationInfo(
-                            left = originalRoiLeft,
-                            top = originalRoiTop,
-                            right = originalRoiRight,
-                            bottom = originalRoiBottom,
-                            expansionCount = expansionCount,
-                            found = false
-                        )
-                        currentRadius *= 1.3f
-                        expansionCount++
-                    }
-                }
-
-                finalRoiInfo?.let { onRoiInfo?.invoke(it) }
-
-                if (foundSpots == null) {
-                    onRoiInfo?.invoke(null)
-                    val searchResult = limitRegionWorking?.let {
-                        detector.detectBrightSpots(
-                            bitmap = workingBitmap,
-                            threshold = 80f,
-                            gridSize = gridSize,
-                            maxSpots = maxSpots,
-                            detectColoredLeds = true,
-                            roiLeft = it.left,
-                            roiTop = it.top,
-                            roiRight = it.right,
-                            roiBottom = it.bottom
-                        )
-                    } ?: detector.detectBrightSpots(
-                        bitmap = workingBitmap,
-                        threshold = 80f,
-                        gridSize = gridSize,
-                        maxSpots = maxSpots,
-                        detectColoredLeds = true
+                    finalRoiInfo = RoiVisualizationInfo(
+                        left = originalRoiLeft,
+                        top = originalRoiTop,
+                        right = originalRoiRight,
+                        bottom = originalRoiBottom,
+                        expansionCount = expansionCount,
+                        found = true
                     )
-                    Pair(searchResult, false)
-                } else Pair(foundSpots, false)
+                } else {
+                    currentRadius *= 1.3f
+                    expansionCount++
+                    val originalRoiLeft = roiLeft / workingScale
+                    val originalRoiTop = roiTop / workingScale
+                    val originalRoiRight = roiRight / workingScale
+                    val originalRoiBottom = roiBottom / workingScale
+                    finalRoiInfo = RoiVisualizationInfo(
+                        left = originalRoiLeft,
+                        top = originalRoiTop,
+                        right = originalRoiRight,
+                        bottom = originalRoiBottom,
+                        expansionCount = expansionCount,
+                        found = false
+                    )
+                }
             }
 
-            else -> {
-                // 全图搜索（或限制区域内搜索）
+            // 找到或全图搜索
+            if (foundSpots == null) {
                 onRoiInfo?.invoke(null)
                 val searchResult = limitRegionWorking?.let {
                     detector.detectBrightSpots(
@@ -1428,7 +1406,7 @@ private fun processImage(
                         threshold = 80f,
                         gridSize = gridSize,
                         maxSpots = maxSpots,
-                        detectColoredLeds = (maxSpots == 3),
+                        detectColoredLeds = true,
                         roiLeft = it.left,
                         roiTop = it.top,
                         roiRight = it.right,
@@ -1439,10 +1417,37 @@ private fun processImage(
                     threshold = 80f,
                     gridSize = gridSize,
                     maxSpots = maxSpots,
-                    detectColoredLeds = (maxSpots == 3)
+                    detectColoredLeds = true
                 )
                 Pair(searchResult, false)
+            } else {
+                finalRoiInfo?.let { onRoiInfo?.invoke(it) }
+                Pair(foundSpots, false)
             }
+
+        } else {
+            // 全图搜索逻辑保持原样
+            onRoiInfo?.invoke(null)
+            val searchResult = limitRegionWorking?.let {
+                detector.detectBrightSpots(
+                    bitmap = workingBitmap,
+                    threshold = 80f,
+                    gridSize = gridSize,
+                    maxSpots = maxSpots,
+                    detectColoredLeds = (maxSpots == 3),
+                    roiLeft = it.left,
+                    roiTop = it.top,
+                    roiRight = it.right,
+                    roiBottom = it.bottom
+                )
+            } ?: detector.detectBrightSpots(
+                bitmap = workingBitmap,
+                threshold = 80f,
+                gridSize = gridSize,
+                maxSpots = maxSpots,
+                detectColoredLeds = (maxSpots == 3)
+            )
+            Pair(searchResult, false)
         }
 
         val invScale = if (scaleDown < 1f) 1f / scaleDown else 1f

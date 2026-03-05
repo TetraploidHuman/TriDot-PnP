@@ -49,7 +49,7 @@ class BrightSpotDetector {
     private var targetsPrepared = false
 
     // 检测参数 - 可调整以检测微小LED
-    var minPixelBrightness: Float = 50f   // 最小像素亮度（用于 sampleColorAt 等处）
+    var minPixelBrightness: Float = 20f   // 最小像素亮度（用于 sampleColorAt 等处）
     var minTotalBrightness: Float = 60f   // 最小总亮度（区域平均RGB之和）
     var dynamicThresholdMin: Float = 50f  // 动态阈值最小值
     var minPixelCount: Int = 1            // 最小像素数

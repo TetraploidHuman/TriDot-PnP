@@ -1210,23 +1210,17 @@ private fun processImage(
     enableRoiOptimization: Boolean = true,
     lastTriSpots: Triple<Offset, Offset, Offset>? = null,
     lastTriSpotsImageSize: Pair<Int, Int>? = null,
-    manualRoi: ManualRoiCoords? = null, // left, top, right, bottom (图像坐标) - 用于优先识别
-    limitRegion: ManualRoiCoords? = null, // left, top, right, bottom (图像坐标) - 用于限制识别区域
+    manualRoi: ManualRoiCoords? = null,
+    limitRegion: ManualRoiCoords? = null,
     onRoiInfo: ((RoiVisualizationInfo?) -> Unit)? = null,
-    onSpotsDetected: (List<BrightSpot>, Pair<Int, Int>, Boolean) -> Unit, // spots, size, foundInManualRoi
+    onSpotsDetected: (List<BrightSpot>, Pair<Int, Int>, Boolean) -> Unit,
     onBitmapCaptured: (Bitmap) -> Unit = {}
 ) {
     try {
-        // 将ImageProxy转换为Bitmap
         val bitmap = imageProxy.toBitmap()
-
-        // 旋转图像以匹配设备方向
         val rotatedBitmap = rotateBitmap(bitmap, imageProxy.imageInfo.rotationDegrees.toFloat())
 
-        // 下采样以提升检测性能（保持纵横比）
-        // 注意：增大maxDim可以提高微小LED的识别能力，但会降低性能
-        // 对于微小LED，建议使用1280或更高（原640）
-        val maxDim = 1280f  // 增大以提高微小LED检测能力
+        val maxDim = 1280f
         val origW = rotatedBitmap.width
         val origH = rotatedBitmap.height
         val scaleDown = kotlin.math.min(1f, maxDim / kotlin.math.max(origW, origH))
@@ -1237,199 +1231,145 @@ private fun processImage(
             )
         } else rotatedBitmap
 
-        // 计算ROI（如果存在上一个三色点位置且ROI优化已启用）
-        // 基于三色点的外接圆半径来计算ROI搜索范围
+        val workingScale = kotlin.math.min(
+            workingBitmap.width.toFloat() / rotatedBitmap.width,
+            workingBitmap.height.toFloat() / rotatedBitmap.height
+        )
+
+        // 限制区域映射到 workingBitmap
+        data class LimitRegionWorking(val left: Int, val top: Int, val right: Int, val bottom: Int)
+        val limitRegionWorking = limitRegion?.let {
+            val w = workingBitmap.width
+            val h = workingBitmap.height
+            val l = (it.left * workingScale).toInt().coerceIn(0, w - 1)
+            val t = (it.top * workingScale).toInt().coerceIn(0, h - 1)
+            val r = (it.right * workingScale).toInt().coerceIn(l + 1, w - 1)
+            val b = (it.bottom * workingScale).toInt().coerceIn(t + 1, h - 1)
+            LimitRegionWorking(l, t, r, b)
+        }
+
+        // 上一次三色点映射到当前图像
         val initialRoiInfo = if (enableRoiOptimization && lastTriSpots != null && lastTriSpotsImageSize != null && maxSpots == 3) {
             val (lastW, lastH) = lastTriSpotsImageSize
             val (currW, currH) = rotatedBitmap.width to rotatedBitmap.height
-            // 将上一个三个点的位置映射到当前图像尺寸（考虑缩放）
-            val scaleX = currW.toFloat() / lastW.toFloat()
-            val scaleY = currH.toFloat() / lastH.toFloat()
-            val p1Scaled = Offset(
-                lastTriSpots.first.x * scaleX,
-                lastTriSpots.first.y * scaleY
-            )
-            val p2Scaled = Offset(
-                lastTriSpots.second.x * scaleX,
-                lastTriSpots.second.y * scaleY
-            )
-            val p3Scaled = Offset(
-                lastTriSpots.third.x * scaleX,
-                lastTriSpots.third.y * scaleY
-            )
-
-            // 计算外接圆半径
-            val circumradius = calculateCircumradius(p1Scaled, p2Scaled, p3Scaled)
-
-            // 计算中心点
-            val centerX = (p1Scaled.x + p2Scaled.x + p3Scaled.x) / 3f
-            val centerY = (p1Scaled.y + p2Scaled.y + p3Scaled.y) / 3f
-
-            // ROI搜索半径：外接圆半径的3倍（允许一些移动和误差）
-            // 同时设置最小和最大限制，避免ROI太小或太大
-            val minRoiRadius = kotlin.math.max(currW, currH) * 0.01f  // 最小为图像尺寸的1%
-            val maxRoiRadius = kotlin.math.max(currW, currH) * 0.25f  // 最大为图像尺寸的25%
-            val roiRadius = (circumradius * 2f).coerceIn(minRoiRadius, maxRoiRadius)
-
-            // 计算workingBitmap的缩放比例
-            val workingScaleValue = kotlin.math.min(workingBitmap.width.toFloat() / currW, workingBitmap.height.toFloat() / currH)
-
-            // 映射中心点和半径到workingBitmap尺寸
-            val workingCenterX = centerX * workingScaleValue
-            val workingCenterY = centerY * workingScaleValue
-            val workingRoiRadius = roiRadius * workingScaleValue
-
-            Triple(workingCenterX, workingCenterY, workingRoiRadius)
+            val scaleX = currW.toFloat() / lastW
+            val scaleY = currH.toFloat() / lastH
+            val p1 = Offset(lastTriSpots.first.x * scaleX, lastTriSpots.first.y * scaleY)
+            val p2 = Offset(lastTriSpots.second.x * scaleX, lastTriSpots.second.y * scaleY)
+            val p3 = Offset(lastTriSpots.third.x * scaleX, lastTriSpots.third.y * scaleY)
+            val centerX = (p1.x + p2.x + p3.x) / 3f
+            val centerY = (p1.y + p2.y + p3.y) / 3f
+            val radius = calculateCircumradius(p1, p2, p3) * 2f
+            Triple(centerX * workingScale, centerY * workingScale, radius * workingScale)
         } else null
 
-        // 计算原图尺寸和workingBitmap尺寸的缩放比例（用于ROI可视化）
-        // workingBitmap相对于rotatedBitmap的缩放比例
-        val workingScale = kotlin.math.min(workingBitmap.width.toFloat() / rotatedBitmap.width, workingBitmap.height.toFloat() / rotatedBitmap.height)
+        val (spotsScaled, foundInManualRoi) = when {
+            manualRoi != null -> {
+                // 手动ROI优先
+                var roiLeft = (manualRoi.left * workingScale).toInt()
+                var roiTop = (manualRoi.top * workingScale).toInt()
+                var roiRight = (manualRoi.right * workingScale).toInt()
+                var roiBottom = (manualRoi.bottom * workingScale).toInt()
 
-        // 如果有限制区域，计算限制区域在workingBitmap中的坐标
-        data class LimitRegionWorking(
-            val left: Int,
-            val top: Int,
-            val right: Int,
-            val bottom: Int
-        )
-        val limitRegionWorking = if (limitRegion != null) {
-            val workingWidth = workingBitmap.width
-            val workingHeight = workingBitmap.height
-            val limitLeft = (limitRegion.left * workingScale).toInt().coerceAtLeast(0).coerceAtMost(workingWidth - 1)
-            val limitTop = (limitRegion.top * workingScale).toInt().coerceAtLeast(0).coerceAtMost(workingHeight - 1)
-            val limitRight = (limitRegion.right * workingScale).toInt().coerceAtLeast(limitLeft + 1).coerceAtMost(workingWidth - 1)
-            val limitBottom = (limitRegion.bottom * workingScale).toInt().coerceAtLeast(limitTop + 1).coerceAtMost(workingHeight - 1)
-            LimitRegionWorking(limitLeft, limitTop, limitRight, limitBottom)
-        } else null
-
-        // 优先使用手动选择的ROI（但如果有限制区域，必须与限制区域取交集）
-        val (spotsScaled, foundInManualRoi) = if (manualRoi != null) {
-            // 使用手动选择的ROI区域
-            val roiLeftOrig = manualRoi.left
-            val roiTopOrig = manualRoi.top
-            val roiRightOrig = manualRoi.right
-            val roiBottomOrig = manualRoi.bottom
-            val workingWidth = workingBitmap.width
-            val workingHeight = workingBitmap.height
-
-            // 将原图坐标映射到workingBitmap坐标
-            var roiLeft = (roiLeftOrig * workingScale).toInt().coerceAtLeast(0).coerceAtMost(workingWidth - 1)
-            var roiTop = (roiTopOrig * workingScale).toInt().coerceAtLeast(0).coerceAtMost(workingHeight - 1)
-            var roiRight = (roiRightOrig * workingScale).toInt().coerceAtLeast(roiLeft + 1).coerceAtMost(workingWidth - 1)
-            var roiBottom = (roiBottomOrig * workingScale).toInt().coerceAtLeast(roiTop + 1).coerceAtMost(workingHeight - 1)
-
-            // 如果有限制区域，将ROI与限制区域取交集
-            if (limitRegionWorking != null) {
-                roiLeft = kotlin.math.max(roiLeft, limitRegionWorking.left)
-                roiTop = kotlin.math.max(roiTop, limitRegionWorking.top)
-                roiRight = kotlin.math.min(roiRight, limitRegionWorking.right)
-                roiBottom = kotlin.math.min(roiBottom, limitRegionWorking.bottom)
-                // 如果交集无效，使用限制区域
-                if (roiRight <= roiLeft || roiBottom <= roiTop) {
-                    roiLeft = limitRegionWorking.left
-                    roiTop = limitRegionWorking.top
-                    roiRight = limitRegionWorking.right
-                    roiBottom = limitRegionWorking.bottom
+                limitRegionWorking?.let {
+                    roiLeft = kotlin.math.max(roiLeft, it.left)
+                    roiTop = kotlin.math.max(roiTop, it.top)
+                    roiRight = kotlin.math.min(roiRight, it.right)
+                    roiBottom = kotlin.math.min(roiBottom, it.bottom)
+                    if (roiRight <= roiLeft || roiBottom <= roiTop) {
+                        roiLeft = it.left
+                        roiTop = it.top
+                        roiRight = it.right
+                        roiBottom = it.bottom
+                    }
                 }
+
+                onRoiInfo?.invoke(null) // 手动ROI不显示自动ROI
+
+                val manualSpots = detector.detectBrightSpots(
+                    bitmap = workingBitmap,
+                    threshold = 80f,
+                    gridSize = gridSize,
+                    maxSpots = maxSpots,
+                    detectColoredLeds = (maxSpots == 3),
+                    roiLeft = roiLeft,
+                    roiTop = roiTop,
+                    roiRight = roiRight,
+                    roiBottom = roiBottom
+                )
+                val foundFlag = manualSpots.size == 3 && maxSpots == 3
+                Pair(manualSpots, foundFlag)
             }
 
-            // 清除ROI可视化信息（因为使用手动ROI时不需要显示自动ROI）
-            onRoiInfo?.invoke(null)
+            initialRoiInfo != null && maxSpots == 3 -> {
+                // ROI锁定+异常检测+逐步扩大
+                val (centerX, centerY, initialRadius) = initialRoiInfo
+                var currentRadius = initialRadius
+                val maxRadiusLimit = limitRegionWorking?.let { kotlin.math.max(it.right - it.left, it.bottom - it.top) * 0.5f }
+                val maxAllowedRadius = kotlin.math.min(kotlin.math.max(workingBitmap.width, workingBitmap.height) * 0.4f, maxRadiusLimit ?: Float.MAX_VALUE)
 
-            // 在手动ROI区域内检测（已与限制区域取交集）
-            val manualRoiSpots = detector.detectBrightSpots(
-                bitmap = workingBitmap,
-                threshold = 80f,
-                gridSize = gridSize,
-                maxSpots = maxSpots,
-                detectColoredLeds = (maxSpots == 3),
-                roiLeft = roiLeft,
-                roiTop = roiTop,
-                roiRight = roiRight,
-                roiBottom = roiBottom
-            )
+                var foundSpots: List<BrightSpot>? = null
+                var expansionCount = 0
+                val maxExpansions = 10
+                var lastSpotsScaled: Triple<Offset, Offset, Offset>? = null
+                var finalRoiInfo: RoiVisualizationInfo? = null
 
-            // 检查是否在手动ROI中找到了三色点
-            val foundInManualRoiFlag = manualRoiSpots.size == 3 && maxSpots == 3
-
-            Pair(manualRoiSpots, foundInManualRoiFlag)
-        } else if (initialRoiInfo != null && maxSpots == 3) {
-            // 有初始ROI，尝试渐进扩大
-            val (centerX, centerY, initialRoiRadius) = initialRoiInfo
-            var currentRadius = initialRoiRadius
-            val workingWidth = workingBitmap.width
-            val workingHeight = workingBitmap.height
-
-            // 如果有限制区域，确保中心点在限制区域内，并限制最大半径
-            val maxRadiusLimit = if (limitRegionWorking != null) {
-                val limitWidth = limitRegionWorking.right - limitRegionWorking.left
-                val limitHeight = limitRegionWorking.bottom - limitRegionWorking.top
-                // 限制半径不超过限制区域的对角线的一半
-                kotlin.math.max(limitWidth, limitHeight) * 0.5f
-            } else null
-
-            // 最大ROI半径为图像最大尺寸的80%（避免几乎全图搜索）
-            val maxAllowedRadius = kotlin.math.min(
-                kotlin.math.max(workingWidth, workingHeight) * 0.4f,
-                maxRadiusLimit ?: Float.MAX_VALUE
-            )
-
-            var foundSpots: List<BrightSpot>? = null
-            var expansionCount = 0
-            val maxExpansions = 10 // 最多扩大10次，避免无限循环
-
-            // 逐步扩大ROI并检测
-            var finalRoiInfo: RoiVisualizationInfo? = null
-            while (foundSpots == null && currentRadius <= maxAllowedRadius && expansionCount < maxExpansions) {
-                // 计算当前ROI范围（workingBitmap尺寸）
-                val roiLeft = (centerX - currentRadius).toInt().coerceAtLeast(0)
-                val roiTop = (centerY - currentRadius).toInt().coerceAtLeast(0)
-                val roiRight = (centerX + currentRadius).toInt().coerceAtMost(workingWidth - 1)
-                val roiBottom = (centerY + currentRadius).toInt().coerceAtMost(workingHeight - 1)
-
-                // 确保ROI有效
-                if (roiRight > roiLeft && roiBottom > roiTop) {
-                    // 如果有限制区域，确保ROI在限制区域内
-                    var finalRoiLeft = roiLeft
-                    var finalRoiTop = roiTop
-                    var finalRoiRight = roiRight
-                    var finalRoiBottom = roiBottom
+                while (foundSpots == null && currentRadius <= maxAllowedRadius && expansionCount < maxExpansions) {
+                    var roiLeft = (centerX - currentRadius).toInt().coerceAtLeast(0)
+                    var roiTop = (centerY - currentRadius).toInt().coerceAtLeast(0)
+                    var roiRight = (centerX + currentRadius).toInt().coerceAtMost(workingBitmap.width - 1)
+                    var roiBottom = (centerY + currentRadius).toInt().coerceAtMost(workingBitmap.height - 1)
 
                     if (limitRegionWorking != null) {
-                        finalRoiLeft = kotlin.math.max(roiLeft, limitRegionWorking.left)
-                        finalRoiTop = kotlin.math.max(roiTop, limitRegionWorking.top)
-                        finalRoiRight = kotlin.math.min(roiRight, limitRegionWorking.right)
-                        finalRoiBottom = kotlin.math.min(roiBottom, limitRegionWorking.bottom)
-                        // 如果交集无效，跳过此次检测
-                        if (finalRoiRight <= finalRoiLeft || finalRoiBottom <= finalRoiTop) {
+                        roiLeft = kotlin.math.max(roiLeft, limitRegionWorking.left)
+                        roiTop = kotlin.math.max(roiTop, limitRegionWorking.top)
+                        roiRight = kotlin.math.min(roiRight, limitRegionWorking.right)
+                        roiBottom = kotlin.math.min(roiBottom, limitRegionWorking.bottom)
+                        if (roiRight <= roiLeft || roiBottom <= roiTop) {
                             currentRadius *= 1.3f
                             expansionCount++
                             continue
                         }
                     }
 
-                    // 计算原图尺寸下的ROI坐标（用于可视化）
-                    val originalRoiLeft = finalRoiLeft / workingScale
-                    val originalRoiTop = finalRoiTop / workingScale
-                    val originalRoiRight = finalRoiRight / workingScale
-                    val originalRoiBottom = finalRoiBottom / workingScale
-
                     val roiSpots = detector.detectBrightSpots(
                         bitmap = workingBitmap,
                         threshold = 80f,
                         gridSize = gridSize,
                         maxSpots = maxSpots,
-                        detectColoredLeds = (maxSpots == 3),
-                        roiLeft = finalRoiLeft,
-                        roiTop = finalRoiTop,
-                        roiRight = finalRoiRight,
-                        roiBottom = finalRoiBottom
+                        detectColoredLeds = true,
+                        roiLeft = roiLeft,
+                        roiTop = roiTop,
+                        roiRight = roiRight,
+                        roiBottom = roiBottom
                     )
 
-                    // 如果找到了三个点，使用结果并保存最终ROI信息
-                    if (roiSpots.size == 3) {
+                    // 检查稳定性
+                    var unstable = false
+                    if (roiSpots.size == 3 && lastSpotsScaled != null) {
+                        val spotsMap = roiSpots.associateBy { it.color }
+                        val r = spotsMap[LedColor.RED]?.position
+                        val g = spotsMap[LedColor.GREEN]?.position
+                        val b = spotsMap[LedColor.BLUE]?.position
+                        if (r != null && g != null && b != null) {
+                            val (lastR, lastG, lastB) = lastSpotsScaled
+                            val meanDist = ((r - lastR).getDistance() + (g - lastG).getDistance() + (b - lastB).getDistance()) / 3f
+                            if (meanDist > currentRadius * 0.5f) unstable = true
+                        }
+                    }
+
+                    val originalRoiLeft = roiLeft / workingScale
+                    val originalRoiTop = roiTop / workingScale
+                    val originalRoiRight = roiRight / workingScale
+                    val originalRoiBottom = roiBottom / workingScale
+
+                    if (roiSpots.size == 3 && !unstable) {
                         foundSpots = roiSpots
+                        lastSpotsScaled = Triple(
+                            roiSpots.first { it.color == LedColor.RED }.position,
+                            roiSpots.first { it.color == LedColor.GREEN }.position,
+                            roiSpots.first { it.color == LedColor.BLUE }.position
+                        )
                         finalRoiInfo = RoiVisualizationInfo(
                             left = originalRoiLeft,
                             top = originalRoiTop,
@@ -1439,7 +1379,6 @@ private fun processImage(
                             found = true
                         )
                     } else {
-                        // 保存当前ROI信息（用于显示扩大过程），但仅在最终确定后更新
                         finalRoiInfo = RoiVisualizationInfo(
                             left = originalRoiLeft,
                             top = originalRoiTop,
@@ -1448,122 +1387,88 @@ private fun processImage(
                             expansionCount = expansionCount,
                             found = false
                         )
-                        // 未找到，扩大ROI半径（增加30%）
                         currentRadius *= 1.3f
                         expansionCount++
                     }
-                } else {
-                    // ROI无效，跳出循环
-                    break
                 }
+
+                finalRoiInfo?.let { onRoiInfo?.invoke(it) }
+
+                if (foundSpots == null) {
+                    onRoiInfo?.invoke(null)
+                    val searchResult = limitRegionWorking?.let {
+                        detector.detectBrightSpots(
+                            bitmap = workingBitmap,
+                            threshold = 80f,
+                            gridSize = gridSize,
+                            maxSpots = maxSpots,
+                            detectColoredLeds = true,
+                            roiLeft = it.left,
+                            roiTop = it.top,
+                            roiRight = it.right,
+                            roiBottom = it.bottom
+                        )
+                    } ?: detector.detectBrightSpots(
+                        bitmap = workingBitmap,
+                        threshold = 80f,
+                        gridSize = gridSize,
+                        maxSpots = maxSpots,
+                        detectColoredLeds = true
+                    )
+                    Pair(searchResult, false)
+                } else Pair(foundSpots, false)
             }
 
-            // 如果在扩大过程中找到了，使用结果；否则进行全图搜索（或在限制区域内搜索）
-            if (foundSpots == null) {
-                // 清除ROI可视化信息（因为要进行全图搜索）
+            else -> {
+                // 全图搜索（或限制区域内搜索）
                 onRoiInfo?.invoke(null)
-                // 如果有限制区域，只在限制区域内搜索；否则全图搜索
-                val searchResult = if (limitRegionWorking != null) {
+                val searchResult = limitRegionWorking?.let {
                     detector.detectBrightSpots(
                         bitmap = workingBitmap,
                         threshold = 80f,
                         gridSize = gridSize,
                         maxSpots = maxSpots,
                         detectColoredLeds = (maxSpots == 3),
-                        roiLeft = limitRegionWorking.left,
-                        roiTop = limitRegionWorking.top,
-                        roiRight = limitRegionWorking.right,
-                        roiBottom = limitRegionWorking.bottom
+                        roiLeft = it.left,
+                        roiTop = it.top,
+                        roiRight = it.right,
+                        roiBottom = it.bottom
                     )
-                } else {
-                    detector.detectBrightSpots(
-                        bitmap = workingBitmap,
-                        threshold = 80f,
-                        gridSize = gridSize,
-                        maxSpots = maxSpots,
-                        detectColoredLeds = (maxSpots == 3)
-                    )
-                }
-                Pair(searchResult, false)
-            } else {
-                // 只在最终确定后更新一次ROI信息，避免闪烁
-                finalRoiInfo?.let { onRoiInfo?.invoke(it) }
-                Pair(foundSpots, false)
-            }
-        } else {
-            // 没有上一个位置或不在三色模式，全图搜索（或在限制区域内搜索）
-            // 清除ROI可视化信息
-            onRoiInfo?.invoke(null)
-            // 如果有限制区域，只在限制区域内搜索；否则全图搜索
-            val searchResult = if (limitRegionWorking != null) {
-                detector.detectBrightSpots(
-                    bitmap = workingBitmap,
-                    threshold = 80f,
-                    gridSize = gridSize,
-                    maxSpots = maxSpots,
-                    detectColoredLeds = (maxSpots == 3),
-                    roiLeft = limitRegionWorking.left,
-                    roiTop = limitRegionWorking.top,
-                    roiRight = limitRegionWorking.right,
-                    roiBottom = limitRegionWorking.bottom
-                )
-            } else {
-                detector.detectBrightSpots(
+                } ?: detector.detectBrightSpots(
                     bitmap = workingBitmap,
                     threshold = 80f,
                     gridSize = gridSize,
                     maxSpots = maxSpots,
                     detectColoredLeds = (maxSpots == 3)
                 )
+                Pair(searchResult, false)
             }
-            Pair(searchResult, false)
         }
 
-        // 将检测到的坐标映射回原图尺寸
         val invScale = if (scaleDown < 1f) 1f / scaleDown else 1f
-        val spotsMapped = if (scaleDown < 1f) {
-            spotsScaled.map { s ->
-                s.copy(position = Offset(s.position.x * invScale, s.position.y * invScale))
-            }
-        } else spotsScaled
+        val spotsMapped = spotsScaled.map { s -> s.copy(position = Offset(s.position.x * invScale, s.position.y * invScale)) }
 
-        // 如果有限制区域，过滤掉区域外的点
-        val spots = if (limitRegion != null) {
-            spotsMapped.filter { spot ->
-                val x = spot.position.x
-                val y = spot.position.y
-                x >= limitRegion.left && x <= limitRegion.right &&
-                        y >= limitRegion.top && y <= limitRegion.bottom
-            }
-        } else {
-            spotsMapped
-        }
+        val spots = limitRegion?.let { region ->
+            spotsMapped.filter { it.position.x in region.left..region.right && it.position.y in region.top..region.bottom }
+        } ?: spotsMapped
 
-        // 在原始分辨率上做一次局部颜色加权质心细化，提升圆心定位精度
-        val refinedSpots = refineSpotsOnOriginal(
-            bitmap = rotatedBitmap,
-            spots = spots,
-            gridSize = gridSize
-        )
-
+        val refinedSpots = refineSpotsOnOriginal(rotatedBitmap, spots, gridSize)
         onSpotsDetected(refinedSpots, Pair(rotatedBitmap.width, rotatedBitmap.height), foundInManualRoi)
 
-        // 提供bitmap副本用于校准（避免被回收）
-        val bitmapCopy = rotatedBitmap.copy(rotatedBitmap.config ?: Bitmap.Config.ARGB_8888, false)
-        onBitmapCaptured(bitmapCopy)
+        onBitmapCaptured(rotatedBitmap.copy(rotatedBitmap.config ?: Bitmap.Config.ARGB_8888, false))
 
-        // 清理
-        if (rotatedBitmap != bitmap) {
-            rotatedBitmap.recycle()
-        }
-        if (workingBitmap != rotatedBitmap) {
-            workingBitmap.recycle()
-        }
+        if (rotatedBitmap != bitmap) rotatedBitmap.recycle()
+        if (workingBitmap != rotatedBitmap) workingBitmap.recycle()
         bitmap.recycle()
+
     } catch (e: Exception) {
         e.printStackTrace()
     }
 }
+
+// 辅助函数
+private fun Offset.getDistance(): Float = kotlin.math.sqrt(x * x + y * y)
+private operator fun Offset.minus(other: Offset) = Offset(x - other.x, y - other.y)
 
 private fun refineSpotsOnOriginal(
     bitmap: Bitmap,

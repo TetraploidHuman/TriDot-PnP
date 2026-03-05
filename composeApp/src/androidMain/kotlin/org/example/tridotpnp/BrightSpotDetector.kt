@@ -9,6 +9,7 @@ import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.pow
 import kotlin.math.sqrt
 
 enum class LedColor {
@@ -364,10 +365,26 @@ class BrightSpotDetector {
                         // 颜色分数：用 raw 强度（相似度×亮度）
                         val colorScore = rC.r + gC.g + bC.b
 
+                        val triCenterX = (rC.x + gC.x + bC.x) / 3f
+                        val triCenterY = (rC.y + gC.y + bC.y) / 3f
+
+                        // 获取中心像素亮度（总亮度V）
+                        val centerXInt = triCenterX.toInt().coerceIn(0, width - 1)
+                        val centerYInt = triCenterY.toInt().coerceIn(0, height - 1)
+                        val centerPixel = pixels[centerYInt * width + centerXInt]
+                        val cr = ((centerPixel shr 16) and 0xFF).toFloat()
+                        val cg = ((centerPixel shr 8) and 0xFF).toFloat()
+                        val cb = (centerPixel and 0xFF).toFloat()
+                        val vCenter = (cr + cg + cb) / (255f * 3f)  // 0..1
+
+                        // 偏黑得分：越黑越高
+                        val centerBlackScore = (1f - vCenter).pow(2) * 0.7f  // 权重可调
+
                         val groupScore =
                             colorScore -
                                     shapePenaltyW * colorScore * shapePenalty -
-                                    geoPenaltyW * colorScore * geoPenalty
+                                    geoPenaltyW * colorScore * geoPenalty +
+                                    centerBlackScore
 
                         if (groupScore > bestGroupScore) {
                             bestGroupScore = groupScore
@@ -581,6 +598,7 @@ class BrightSpotDetector {
         var totalG = 0f
         var totalB = 0f
         var count = 0
+        var darkPixelCount = 0
 
         for (y in startY..endY) {
             val base = y * bmpWidth
@@ -590,6 +608,10 @@ class BrightSpotDetector {
                 val g = ((p shr 8) and 0xFF).toFloat()
                 val b = (p and 0xFF).toFloat()
                 val br = r + g + b
+
+                // 统计暗像素（黑色布料区域）
+                if (br < 50f) darkPixelCount++
+
                 if (br >= dynThreshold) {
                     totalR += r
                     totalG += g
@@ -618,7 +640,12 @@ class BrightSpotDetector {
         val totalBrightness = avgR + avgG + avgB
         if (totalBrightness < minTotalBrightness) return null
 
-        // 5) 转 HSV，算到三个目标颜色的相似度，再乘亮度得到“强度”
+        // 5) 计算暗背景加权因子
+        val darkRatio = darkPixelCount.toFloat() / regionArea  // 越接近1说明周围越暗
+        val darkBoost = 0.5f                                   // 可调参数，0~1之间
+        val weightedBrightness = totalBrightness * (1f + darkBoost * darkRatio)
+
+        // 6) 转 HSV，算到三个目标颜色的相似度，再乘加权亮度
         val hsv = FloatArray(3)
         Color.RGBToHSV(clamp255(avgR), clamp255(avgG), clamp255(avgB), hsv)
 
@@ -626,7 +653,7 @@ class BrightSpotDetector {
         val simG = hsvSimilarity(hsv, targetGreenHSV)
         val simB = hsvSimilarity(hsv, targetBlueHSV)
 
-        return Triple(simR * totalBrightness, simG * totalBrightness, simB * totalBrightness)
+        return Triple(simR * weightedBrightness, simG * weightedBrightness, simB * weightedBrightness)
     }
 
     // ===== 绿色模式保留（你的原逻辑）=====

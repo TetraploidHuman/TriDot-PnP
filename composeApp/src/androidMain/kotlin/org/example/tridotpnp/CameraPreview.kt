@@ -36,6 +36,7 @@ import androidx.core.graphics.scale
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.pow
 
 @androidx.camera.camera2.interop.ExperimentalCamera2Interop
 @OptIn(ExperimentalCamera2Interop::class)
@@ -1498,17 +1499,24 @@ private fun refineSpotsOnOriginal(
     val step = kotlin.math.max(1, kotlin.math.max(width / gridSize, height / gridSize))
     val radius = (step * 2f).toInt().coerceAtLeast(6).coerceAtMost(kotlin.math.min(width, height) / 6)
 
-    fun weightFor(pixel: Int, prefer: LedColor): Float {
+    fun weightFor(pixel: Int, prefer: LedColor, backgroundDarkness: Float = 0.5f): Float {
         val r = ((pixel shr 16) and 0xFF).toFloat()
         val g = ((pixel shr 8) and 0xFF).toFloat()
         val b = (pixel and 0xFF).toFloat()
-        val w: Float = when (prefer) {
-            LedColor.GREEN -> g - (r + b) / 2f
-            LedColor.RED -> r - (g + b) / 2f
-            LedColor.BLUE -> b - (r + g) / 2f
-            else -> r + g + b
+
+        // 亮度与目标色突出度
+        val colorScore = when (prefer) {
+            LedColor.RED -> (r - (g + b) / 2f).coerceAtLeast(0f)
+            LedColor.GREEN -> (g - (r + b) / 2f).coerceAtLeast(0f)
+            LedColor.BLUE -> (b - (r + g) / 2f).coerceAtLeast(0f)
+            else -> (r + g + b).coerceAtLeast(0f)
         }
-        return if (w > 0f) w else 0f
+
+        // 背景黑色权重（V越低越黑，额外加分）
+        val v = (r + g + b) / (255f * 3f)  // 0..1
+        val backgroundScore = (1f - v).pow(2) * backgroundDarkness
+
+        return colorScore * (1f + backgroundScore)
     }
 
     fun refineOne(cx: Float, cy: Float, prefer: LedColor): Offset {
@@ -1535,7 +1543,7 @@ private fun refineSpotsOnOriginal(
                 val yAbs = (y0 + yy).toFloat()
                 for (xx in 0 until wRect) {
                     val xAbs = (x0 + xx).toFloat()
-                    val w = weightFor(buf[row + xx], prefer)
+                    val w = weightFor(buf[row + xx], prefer, backgroundDarkness = 0.6f)
                     if (w <= 0f) continue
                     val dx = xAbs - centerX
                     val dy = yAbs - centerY

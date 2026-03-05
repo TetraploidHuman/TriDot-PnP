@@ -50,10 +50,10 @@ class BrightSpotDetector {
     private var targetsPrepared = false
 
     // 检测参数 - 可调整以检测微小LED
-    var minPixelBrightness: Float = 20f   // 最小像素亮度（用于 sampleColorAt 等处）
-    var minTotalBrightness: Float = 60f   // 最小总亮度（区域平均RGB之和）
-    var dynamicThresholdMin: Float = 50f  // 动态阈值最小值
-    var minPixelCount: Int = 1            // 最小像素数
+    var minPixelBrightness: Float = 10f   // 最小像素亮度（用于 sampleColorAt 等处）
+    var minTotalBrightness: Float = 20f   // 最小总亮度（区域平均RGB之和）
+    var dynamicThresholdMin: Float = 30f  // 动态阈值最小值
+    var minPixelCount: Int = 0            // 最小像素数
     var minRefineRadius: Int = 2          // 最小细化半径
 
     // 面积过滤：在区域里，超过 dynThreshold 的像素太多 => 大块亮色，过滤掉

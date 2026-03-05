@@ -324,10 +324,10 @@ fun BrightSpotDetectionApp() {
                                             value = gridSize.toFloat(),
                                             onValueChange = { value ->
                                                 val rounded = kotlin.math.round(value / 8f).toInt() * 8
-                                                gridSize = rounded.coerceIn(32, 256)
+                                                gridSize = rounded.coerceIn(32, 512)
                                             },
-                                            valueRange = 32f..256f,
-                                            steps = ((256 - 32) / 8 - 1),
+                                            valueRange = 32f..512f,
+                                            steps = ((512 - 32) / 8 - 1),
                                             modifier = Modifier.fillMaxWidth()
                                         )
                                     }

@@ -244,8 +244,9 @@ class BrightSpotDetector {
             val minPairDist2 = minPairDist * minPairDist
             val maxPairDist2 = maxPairDist * maxPairDist
 
-            val shapePenaltyW = 0.12f
-            val geoPenaltyW = 0.6f
+            // 形状/几何惩罚权重
+            val shapePenaltyW = 0.2f                  // 等边偏好（软）
+            val geoPenaltyW = 0.6f                    // 超出距离范围的惩罚（软）
 
             // “纯度加分”：强调某个目标强度要明显胜过另外两个（不硬阈值，避免抖动掉候选）
             val purityBoostW = 0.25f

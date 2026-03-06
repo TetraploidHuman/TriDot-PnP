@@ -15,11 +15,34 @@ data class ProbabilityMatrix128x96(
         }
     }
 
+    fun rowsForImage(imageWidth: Int, imageHeight: Int): Int {
+        return if (imageWidth > imageHeight) COLS else ROWS
+    }
+
+    fun colsForImage(imageWidth: Int, imageHeight: Int): Int {
+        return if (imageWidth > imageHeight) ROWS else COLS
+    }
+
+    fun weightAtGridCell(row: Int, col: Int, imageWidth: Int, imageHeight: Int): Float {
+        val isLandscape = imageWidth > imageHeight
+        val (mappedRow, mappedCol) = if (isLandscape) {
+            // 横屏下显示网格采用 96x128，底层矩阵做转置读取，保证绘制和检测一致。
+            col to row
+        } else {
+            row to col
+        }
+        val safeRow = mappedRow.coerceIn(0, ROWS - 1)
+        val safeCol = mappedCol.coerceIn(0, COLS - 1)
+        return values[safeRow * COLS + safeCol]
+    }
+
     fun weightAtPixel(x: Int, y: Int, imageWidth: Int, imageHeight: Int): Float {
         if (imageWidth <= 0 || imageHeight <= 0) return 1f
-        val col = ((x.toFloat() / imageWidth) * COLS).toInt().coerceIn(0, COLS - 1)
-        val row = ((y.toFloat() / imageHeight) * ROWS).toInt().coerceIn(0, ROWS - 1)
-        return values[row * COLS + col]
+        val rows = rowsForImage(imageWidth, imageHeight)
+        val cols = colsForImage(imageWidth, imageHeight)
+        val col = ((x.toFloat() / imageWidth) * cols).toInt().coerceIn(0, cols - 1)
+        val row = ((y.toFloat() / imageHeight) * rows).toInt().coerceIn(0, rows - 1)
+        return weightAtGridCell(row, col, imageWidth, imageHeight)
     }
 }
 

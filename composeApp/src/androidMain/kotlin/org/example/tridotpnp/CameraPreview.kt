@@ -667,8 +667,8 @@ fun CameraPreview(
 
                 // 概率矩阵可视化：低概率更灰白，高概率更透明
                 probabilityMatrix?.let { matrix ->
-                    val rows = ProbabilityMatrix128x96.ROWS
-                    val cols = ProbabilityMatrix128x96.COLS
+                    val rows = matrix.rowsForImage(imageWidth, imageHeight)
+                    val cols = matrix.colsForImage(imageWidth, imageHeight)
                     val cellWidth = imageWidth.toFloat() / cols.toFloat()
                     val cellHeight = imageHeight.toFloat() / rows.toFloat()
 
@@ -680,9 +680,8 @@ fun CameraPreview(
                     val hazeColor = Color(0xFFF2F2F2)
 
                     for (row in 0 until rows step rowStep) {
-                        val base = row * cols
                         for (col in 0 until cols step colStep) {
-                            val weight = matrix.values[base + col]
+                            val weight = matrix.weightAtGridCell(row, col, imageWidth, imageHeight)
                             val normalized = ((weight - lowWeight) / weightRange).coerceIn(0f, 1f)
                             val alpha = (0.50f * (1f - normalized)).coerceIn(0.02f, 0.50f)
 

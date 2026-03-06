@@ -69,7 +69,7 @@ fun BrightSpotDetectionApp() {
     val cameraPermissionState = rememberPermissionState(Manifest.permission.CAMERA)
     var detectedSpotsCount by remember { mutableIntStateOf(0) }
     var detectedSpots by remember { mutableStateOf<List<BrightSpot>>(emptyList()) }
-    var maxSpots by remember { mutableIntStateOf(3) } // 默认显示最亮的1个点
+    val targetSpotCount = 3
     var exposureCompensation by remember { mutableIntStateOf(0) } // 曝光补偿，0为默认值
     var gridSize by remember { mutableIntStateOf(256) } // 检测网格大小，默认50x50
     var probabilityMatrix by remember { mutableStateOf(buildManualProbabilityMatrix128x96()) }
@@ -115,7 +115,7 @@ fun BrightSpotDetectionApp() {
                     // 相机预览
                     CameraPreview(
                         modifier = Modifier.fillMaxSize(),
-                        maxSpots = maxSpots,
+                        maxSpots = targetSpotCount,
                         exposureCompensation = exposureCompensation,
                         gridSize = gridSize,
                         probabilityMatrix = probabilityMatrix,
@@ -129,45 +129,28 @@ fun BrightSpotDetectionApp() {
                             detectedSpots = spots
                             imageSize = size
 
-                            // 根据选择的点数执行不同的PnP计算
-                            when (maxSpots) {// 3点模式：RGB三色LED，计算完整6DOF姿态
-                                3 if spots.size == 3 && size != null -> {
-                                    // 识别红、绿、蓝三个点
-                                    val redSpot = spots.find { it.color == LedColor.RED }
-                                    val greenSpot = spots.find { it.color == LedColor.GREEN }
-                                    val blueSpot = spots.find { it.color == LedColor.BLUE }
+                            // 仅保留3点模式：RGB三色LED，计算完整6DOF姿态
+                            if (spots.size == 3 && size != null) {
+                                val redSpot = spots.find { it.color == LedColor.RED }
+                                val greenSpot = spots.find { it.color == LedColor.GREEN }
+                                val blueSpot = spots.find { it.color == LedColor.BLUE }
 
-                                    pnpResult =
-                                        if (redSpot != null && greenSpot != null && blueSpot != null) {
-                                            pnpCalculator.calculate3PointPnP(
-                                                redPoint = redSpot.position,
-                                                greenPoint = greenSpot.position,
-                                                bluePoint = blueSpot.position,
-                                                triangleEdgeLength = knownDistance,
-                                                focalLength = null,
-                                                imageWidth = size.first,
-                                                imageHeight = size.second
-                                            )
-                                        } else {
-                                            null  // 未检测到完整的RGB三色
-                                        }
-                                }
-
-                                // 2点模式：相同颜色LED，计算距离和方向
-                                2 if spots.size == 2 && size != null -> {
-                                    pnpResult = pnpCalculator.calculate2PointPnP(
-                                        point1 = spots[0].position,
-                                        point2 = spots[1].position,
-                                        realDistance = knownDistance,
-                                        focalLength = null,
-                                        imageWidth = size.first,
-                                        imageHeight = size.second
-                                    )
-                                }
-
-                                else -> {
-                                    pnpResult = null
-                                }
+                                pnpResult =
+                                    if (redSpot != null && greenSpot != null && blueSpot != null) {
+                                        pnpCalculator.calculate3PointPnP(
+                                            redPoint = redSpot.position,
+                                            greenPoint = greenSpot.position,
+                                            bluePoint = blueSpot.position,
+                                            triangleEdgeLength = knownDistance,
+                                            focalLength = null,
+                                            imageWidth = size.first,
+                                            imageHeight = size.second
+                                        )
+                                    } else {
+                                        null  // 未检测到完整的RGB三色
+                                    }
+                            } else {
+                                pnpResult = null
                             }
                         },
                         onBitmapCaptured = { bitmap ->
@@ -179,7 +162,7 @@ fun BrightSpotDetectionApp() {
                     )
 
                     // 校准标记（校准模式下显示）
-                    if (isCalibrating && maxSpots == 3) {
+                    if (isCalibrating) {
                         // Canvas层：不拦截触摸事件，让事件穿透到CameraPreview进行ROI选择
                         Canvas(
                             modifier = Modifier.fillMaxSize()
@@ -258,7 +241,7 @@ fun BrightSpotDetectionApp() {
                         .align(Alignment.TopEnd)
                         .width(320.dp)
                         .fillMaxHeight(),
-                    color = Color(0xE6FFFFFF)
+                    color = Color(0xFF121212)
                 ) {
                     Box(
                         modifier = Modifier.fillMaxSize()
@@ -269,7 +252,7 @@ fun BrightSpotDetectionApp() {
                                     .padding(8.dp)
                                     .zIndex(2f),
                                 colors = IconButtonDefaults.iconButtonColors(
-                                    containerColor = Color(0x50000000)
+                                    containerColor = Color(0xFF1A1A1A)
                                 ),
                                 shape = CircleShape,
                                 onClick = { showSettings = true }
@@ -297,44 +280,30 @@ fun BrightSpotDetectionApp() {
                                     // 亮点数量
                                     Text(
                                         text = "TARGETS",
-                                        color = Color(0xFF888888),
+                                        color = Color(0xFF9A9A9A),
                                         style = MaterialTheme.typography.labelSmall
                                     )
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    Surface(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(52.dp),
+                                        shape = MaterialTheme.shapes.small,
+                                        color = Color(0xFF0078D4),
+                                        shadowElevation = 0.dp
                                     ) {
-                                        for (count in 1..3) {
-                                            Surface(
-                                                modifier = Modifier
-                                                    .weight(1f)
-                                                    .height(52.dp),
-                                                shape = MaterialTheme.shapes.small,
-                                                color = if (maxSpots == count) Color(0xFF0078D4) else Color(
-                                                    0xFFF0F0F0
-                                                ),
-                                                shadowElevation = if (maxSpots == count) 4.dp else 0.dp
-                                            ) {
-                                                TextButton(
-                                                    onClick = { maxSpots = count },
-                                                    modifier = Modifier.fillMaxSize(),
-                                                    contentPadding = PaddingValues(0.dp)
-                                                ) {
-                                                    Text(
-                                                        text = "$count",
-                                                        color = if (maxSpots == count) Color.White else Color(
-                                                            0xFF333333
-                                                        ),
-                                                        style = MaterialTheme.typography.headlineMedium
-                                                    )
-                                                }
-                                            }
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Text(
+                                                text = "RGB / 3",
+                                                color = Color.White,
+                                                style = MaterialTheme.typography.titleMedium
+                                            )
                                         }
                                     }
 
                                     // 精度控制
                                     Text(
                                         text = "PRECISION",
-                                        color = Color(0xFF888888),
+                                        color = Color(0xFF9A9A9A),
                                         style = MaterialTheme.typography.labelSmall,
                                         modifier = Modifier.padding(top = 4.dp)
                                     )
@@ -353,7 +322,7 @@ fun BrightSpotDetectionApp() {
                                             )
                                             Text(
                                                 text = "${gridSize * gridSize}",
-                                                color = Color(0xFF888888),
+                                                color = Color(0xFF9A9A9A),
                                                 style = MaterialTheme.typography.bodySmall
                                             )
                                         }
@@ -372,7 +341,7 @@ fun BrightSpotDetectionApp() {
                                     // 曝光控制（横向）
                                     Text(
                                         text = "EXPOSURE",
-                                        color = Color(0xFF888888),
+                                        color = Color(0xFF9A9A9A),
                                         style = MaterialTheme.typography.labelSmall,
                                         modifier = Modifier.padding(top = 4.dp)
                                     )
@@ -381,7 +350,7 @@ fun BrightSpotDetectionApp() {
                                             .fillMaxWidth()
                                             .height(80.dp),
                                         shape = MaterialTheme.shapes.small,
-                                        color = Color(0xFFF0F0F0)
+                                        color = Color(0xFF1F1F1F)
                                     ) {
                                         Row(
                                             modifier = Modifier.fillMaxSize(),
@@ -392,9 +361,9 @@ fun BrightSpotDetectionApp() {
                                                 onClick = { if (exposureCompensation > -6) exposureCompensation-- }
                                             ) {
                                                 Text(
-                                                    "−",
+                                                    "?",
                                                     style = MaterialTheme.typography.headlineMedium,
-                                                    color = Color(0xFF333333)
+                                                    color = Color(0xFFE6E6E6)
                                                 )
                                             }
                                             Text(
@@ -411,14 +380,14 @@ fun BrightSpotDetectionApp() {
                                                 Text(
                                                     "+",
                                                     style = MaterialTheme.typography.headlineMedium,
-                                                    color = Color(0xFF333333)
+                                                    color = Color(0xFFE6E6E6)
                                                 )
                                             }
                                         }
                                     }
 
                                     // ROI优化开关（仅在3点模式显示）
-                                    if (maxSpots == 3) {
+                                    if (targetSpotCount == 3) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -426,7 +395,7 @@ fun BrightSpotDetectionApp() {
                                         ) {
                                             Text(
                                                 text = "ROI OPTIMIZATION",
-                                                color = Color(0xFF888888),
+                                                color = Color(0xFF9A9A9A),
                                                 style = MaterialTheme.typography.labelSmall
                                             )
                                             Surface(
@@ -437,7 +406,7 @@ fun BrightSpotDetectionApp() {
                                                 color = if (enableRoiOptimization) Color(0xFF4CAF50) else Color(
                                                     0xFFCCCCCC
                                                 ),
-                                                shadowElevation = if (enableRoiOptimization) 4.dp else 0.dp
+                                                shadowElevation = 0.dp
                                             ) {
                                                 TextButton(
                                                     onClick = {
@@ -461,11 +430,11 @@ fun BrightSpotDetectionApp() {
                                         HorizontalDivider(
                                             modifier = Modifier.padding(vertical = 4.dp),
                                             thickness = DividerDefaults.Thickness,
-                                            color = Color(0xFFE0E0E0)
+                                            color = Color(0xFF2D2D2D)
                                         )
                                         Text(
                                             text = "CALIBRATION",
-                                            color = Color(0xFF888888),
+                                            color = Color(0xFF9A9A9A),
                                             style = MaterialTheme.typography.labelSmall
                                         )
                                         Row(
@@ -481,7 +450,7 @@ fun BrightSpotDetectionApp() {
                                                         .height(40.dp),
                                                     shape = MaterialTheme.shapes.small,
                                                     color = Color(0xFFFF6666),
-                                                    shadowElevation = 4.dp
+                                                    shadowElevation = 0.dp
                                                 ) {
                                                     TextButton(
                                                         onClick = {
@@ -501,7 +470,7 @@ fun BrightSpotDetectionApp() {
                                                         contentPadding = PaddingValues(0.dp)
                                                     ) {
                                                         Text(
-                                                            text = "✗ 清除",
+                                                            text = "? 清除",
                                                             color = Color.White,
                                                             style = MaterialTheme.typography.labelMedium
                                                         )
@@ -518,7 +487,7 @@ fun BrightSpotDetectionApp() {
                                                 color = if (isCalibrating) Color(0xFFFFAA00) else Color(
                                                     0xFF0078D4
                                                 ),
-                                                shadowElevation = 4.dp
+                                                shadowElevation = 0.dp
                                             ) {
                                                 TextButton(
                                                     onClick = {
@@ -595,21 +564,21 @@ fun BrightSpotDetectionApp() {
                                                                             android.util.Log.d(
                                                                                 "Calibration",
                                                                                 analyzeColor(
-                                                                                    "🔴 红色LED",
+                                                                                    "?? 红色LED",
                                                                                     redColor
                                                                                 )
                                                                             )
                                                                             android.util.Log.d(
                                                                                 "Calibration",
                                                                                 analyzeColor(
-                                                                                    "🟢 绿色LED",
+                                                                                    "?? 绿色LED",
                                                                                     greenColor
                                                                                 )
                                                                             )
                                                                             android.util.Log.d(
                                                                                 "Calibration",
                                                                                 analyzeColor(
-                                                                                    "🔵 蓝色LED",
+                                                                                    "?? 蓝色LED",
                                                                                     blueColor
                                                                                 )
                                                                             )
@@ -626,7 +595,7 @@ fun BrightSpotDetectionApp() {
                                                                             )
                                                                             android.util.Log.d(
                                                                                 "Calibration",
-                                                                                "✓ 校准数据已保存，现在将使用这些颜色进行检测"
+                                                                                "? 校准数据已保存，现在将使用这些颜色进行检测"
                                                                             )
 
                                                                             // 显示成功提示
@@ -636,14 +605,14 @@ fun BrightSpotDetectionApp() {
                                                                                         blueColor.first + blueColor.second + blueColor.third) / 3
                                                                             android.widget.Toast.makeText(
                                                                                 context,
-                                                                                "✓ 校准成功！平均亮度: ${totalBrightness.toInt()}",
+                                                                                "? 校准成功！平均亮度: ${totalBrightness.toInt()}",
                                                                                 android.widget.Toast.LENGTH_SHORT
                                                                             ).show()
                                                                         } else {
                                                                             // 搜索失败
                                                                             android.util.Log.e(
                                                                                 "Calibration",
-                                                                                "✗ 未在圆框内找到有效的RGB颜色"
+                                                                                "? 未在圆框内找到有效的RGB颜色"
                                                                             )
 
                                                                             android.widget.Toast.makeText(
@@ -673,7 +642,7 @@ fun BrightSpotDetectionApp() {
                                                     contentPadding = PaddingValues(0.dp)
                                                 ) {
                                                     Text(
-                                                        text = if (isCalibrating) "✓ 确认" else if (calibrationData != null) "✓ 已校准" else "校准",
+                                                        text = if (isCalibrating) "? 确认" else if (calibrationData != null) "? 已校准" else "校准",
                                                         color = Color.White,
                                                         style = MaterialTheme.typography.labelMedium
                                                     )
@@ -682,16 +651,16 @@ fun BrightSpotDetectionApp() {
                                         }
                                     }
 
-                                    // PnP距离设置（在2点或3点模式显示）
-                                    if (maxSpots == 2 || maxSpots == 3) {
+                                    // PnP距离设置（三色模式）
+                                    if (targetSpotCount == 3) {
                                         HorizontalDivider(
                                             modifier = Modifier.padding(vertical = 4.dp),
                                             thickness = DividerDefaults.Thickness,
-                                            color = Color(0xFFE0E0E0)
+                                            color = Color(0xFF2D2D2D)
                                         )
                                         Text(
-                                            text = if (maxSpots == 3) "△ EDGE LENGTH" else "PnP DISTANCE",
-                                            color = Color(0xFF888888),
+                                            text = "△ EDGE LENGTH",
+                                            color = Color(0xFF9A9A9A),
                                             style = MaterialTheme.typography.labelSmall
                                         )
                                         Row(
@@ -704,9 +673,9 @@ fun BrightSpotDetectionApp() {
                                                 modifier = Modifier.size(40.dp)
                                             ) {
                                                 Text(
-                                                    "−",
+                                                    "?",
                                                     style = MaterialTheme.typography.headlineMedium,
-                                                    color = Color(0xFF333333)
+                                                    color = Color(0xFFE6E6E6)
                                                 )
                                             }
                                             Column(
@@ -731,7 +700,7 @@ fun BrightSpotDetectionApp() {
                                                 Text(
                                                     "+",
                                                     style = MaterialTheme.typography.headlineMedium,
-                                                    color = Color(0xFF333333)
+                                                    color = Color(0xFFE6E6E6)
                                                 )
                                             }
                                         }
@@ -739,7 +708,7 @@ fun BrightSpotDetectionApp() {
 
                                     HorizontalDivider(
                                         modifier = Modifier.padding(vertical = 8.dp),
-                                        thickness = DividerDefaults.Thickness, color = Color(0xFFE0E0E0)
+                                        thickness = DividerDefaults.Thickness, color = Color(0xFF2D2D2D)
                                     )
 
                                     // 状态信息部分
@@ -749,7 +718,7 @@ fun BrightSpotDetectionApp() {
                                         // 状态信息标题
                                         Text(
                                             text = "STATUS",
-                                            color = Color(0xFF888888),
+                                            color = Color(0xFF9A9A9A),
                                             style = MaterialTheme.typography.labelSmall
                                         )
 
@@ -764,7 +733,7 @@ fun BrightSpotDetectionApp() {
                                                 color = if (detectedSpotsCount > 0) Color(0xFF4CAF50) else Color(
                                                     0xFFCCCCCC
                                                 ),
-                                                shadowElevation = if (detectedSpotsCount > 0) 4.dp else 0.dp
+                                                shadowElevation = 0.dp
                                             ) {}
                                             Column(modifier = Modifier.weight(1f)) {
                                                 Text(
@@ -773,8 +742,8 @@ fun BrightSpotDetectionApp() {
                                                     style = MaterialTheme.typography.labelSmall
                                                 )
                                                 Text(
-                                                    text = "$detectedSpotsCount / $maxSpots",
-                                                    color = if (detectedSpotsCount == maxSpots) Color(
+                                                    text = "$detectedSpotsCount / $targetSpotCount",
+                                                    color = if (detectedSpotsCount == targetSpotCount) Color(
                                                         0xFF4CAF50
                                                     ) else Color(0xFFFF9800),
                                                     style = MaterialTheme.typography.titleLarge
@@ -795,7 +764,7 @@ fun BrightSpotDetectionApp() {
                                                 )
                                                 Text(
                                                     text = "${gridSize}×${gridSize}",
-                                                    color = Color(0xFF333333),
+                                                    color = Color(0xFFE6E6E6),
                                                     style = MaterialTheme.typography.titleMedium
                                                 )
                                             }
@@ -808,7 +777,7 @@ fun BrightSpotDetectionApp() {
                                                 )
                                                 Text(
                                                     text = "${gridSize * gridSize}",
-                                                    color = Color(0xFF333333),
+                                                    color = Color(0xFFE6E6E6),
                                                     style = MaterialTheme.typography.titleMedium
                                                 )
                                             }
@@ -830,12 +799,12 @@ fun BrightSpotDetectionApp() {
                                             )
                                         }
 
-                                        // PnP结果显示（在2点或3点模式且有结果时显示）
-                                        if ((maxSpots == 2 || maxSpots == 3) && pnpResult != null) {
+                                        // PnP结果显示（三色模式）
+                                        if (pnpResult != null) {
                                             HorizontalDivider(
                                                 modifier = Modifier.padding(vertical = 12.dp),
                                                 thickness = DividerDefaults.Thickness,
-                                                color = Color(0xFFE0E0E0)
+                                                color = Color(0xFF2D2D2D)
                                             )
 
                                             // 距离、方位角、仰角（横向排列）
@@ -864,7 +833,7 @@ fun BrightSpotDetectionApp() {
                                                     )
                                                     Text(
                                                         text = pnpCalculator.formatAngle(pnpResult!!.azimuth),
-                                                        color = Color(0xFF333333),
+                                                        color = Color(0xFFE6E6E6),
                                                         style = MaterialTheme.typography.titleMedium
                                                     )
                                                 }
@@ -877,7 +846,7 @@ fun BrightSpotDetectionApp() {
                                                     )
                                                     Text(
                                                         text = pnpCalculator.formatAngle(pnpResult!!.elevation),
-                                                        color = Color(0xFF333333),
+                                                        color = Color(0xFFE6E6E6),
                                                         style = MaterialTheme.typography.titleMedium
                                                     )
                                                 }
@@ -886,10 +855,10 @@ fun BrightSpotDetectionApp() {
                                             HorizontalDivider(
                                                 modifier = Modifier.padding(vertical = 8.dp),
                                                 thickness = DividerDefaults.Thickness,
-                                                color = Color(0xFFE0E0E0)
+                                                color = Color(0xFF2D2D2D)
                                             )
 
-                                            if (maxSpots == 3 && pnpResult!!.pose6DOF != null) {
+                                            if (pnpResult!!.pose6DOF != null) {
                                                 // 3点模式：显示完整6DOF姿态
                                                 Column(
                                                     verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -925,12 +894,12 @@ fun BrightSpotDetectionApp() {
                                                     HorizontalDivider(
                                                         modifier = Modifier.padding(vertical = 4.dp),
                                                         thickness = DividerDefaults.Thickness,
-                                                        color = Color(0xFFE0E0E0)
+                                                        color = Color(0xFF2D2D2D)
                                                     )
 
                                                     Text(
                                                         text = "ORIENTATION",
-                                                        color = Color(0xFF888888),
+                                                        color = Color(0xFF9A9A9A),
                                                         style = MaterialTheme.typography.labelSmall
                                                     )
 
@@ -979,76 +948,6 @@ fun BrightSpotDetectionApp() {
                                                                     pnpResult!!.pose6DOF!!.yaw
                                                                 ),
                                                                 color = Color(0xFF3498DB),
-                                                                style = MaterialTheme.typography.bodyMedium
-                                                            )
-                                                        }
-                                                    }
-                                                }
-                                            } else {
-                                                // 2点模式：显示3D坐标
-                                                Column(
-                                                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                                                ) {
-                                                    Text(
-                                                        text = "3D COORDINATES",
-                                                        color = Color(0xFF888888),
-                                                        style = MaterialTheme.typography.labelSmall
-                                                    )
-
-                                                    Row(
-                                                        modifier = Modifier.fillMaxWidth(),
-                                                        horizontalArrangement = Arrangement.SpaceBetween
-                                                    ) {
-                                                        Column(modifier = Modifier.weight(1f)) {
-                                                            Text(
-                                                                text = "POINT 1",
-                                                                color = Color(0xFF999999),
-                                                                style = MaterialTheme.typography.labelSmall
-                                                            )
-                                                            Text(
-                                                                text = pnpCalculator.formatPoint3D(
-                                                                    pnpResult!!.point1Coords
-                                                                ),
-                                                                color = Color(0xFF333333),
-                                                                style = MaterialTheme.typography.bodySmall
-                                                            )
-                                                        }
-
-                                                        Column(
-                                                            modifier = Modifier.weight(1f),
-                                                            horizontalAlignment = Alignment.End
-                                                        ) {
-                                                            Text(
-                                                                text = "POINT 2",
-                                                                color = Color(0xFF999999),
-                                                                style = MaterialTheme.typography.labelSmall
-                                                            )
-                                                            Text(
-                                                                text = pnpCalculator.formatPoint3D(
-                                                                    pnpResult!!.point2Coords
-                                                                ),
-                                                                color = Color(0xFF333333),
-                                                                style = MaterialTheme.typography.bodySmall,
-                                                                textAlign = TextAlign.End
-                                                            )
-                                                        }
-                                                    }
-
-                                                    Row(
-                                                        modifier = Modifier.fillMaxWidth(),
-                                                        horizontalArrangement = Arrangement.Center
-                                                    ) {
-                                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                            Text(
-                                                                text = "CENTER",
-                                                                color = Color(0xFF999999),
-                                                                style = MaterialTheme.typography.labelSmall
-                                                            )
-                                                            Text(
-                                                                text = pnpCalculator.formatPoint3D(
-                                                                    pnpResult!!.centerCoords
-                                                                ),
-                                                                color = Color(0xFF0078D4),
                                                                 style = MaterialTheme.typography.bodyMedium
                                                             )
                                                         }
@@ -1161,7 +1060,7 @@ fun PermissionRequestContent(onRequestPermission: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(Color(0xFF101010))
             .padding(32.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
@@ -1169,12 +1068,14 @@ fun PermissionRequestContent(onRequestPermission: () -> Unit) {
         Text(
             text = "需要相机权限",
             style = MaterialTheme.typography.headlineMedium,
+            color = Color(0xFFE6E6E6),
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(bottom = 16.dp)
         )
         Text(
             text = "此应用需要访问您的相机来检测亮点。",
             style = MaterialTheme.typography.bodyLarge,
+            color = Color(0xFF9A9A9A),
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(bottom = 32.dp)
         )
@@ -1189,7 +1090,7 @@ fun PermissionRationaleContent(onRequestPermission: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(Color(0xFF101010))
             .padding(32.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
@@ -1197,6 +1098,7 @@ fun PermissionRationaleContent(onRequestPermission: () -> Unit) {
         Text(
             text = "需要相机权限",
             style = MaterialTheme.typography.headlineMedium,
+            color = Color(0xFFE6E6E6),
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(bottom = 16.dp)
         )
@@ -1204,6 +1106,7 @@ fun PermissionRationaleContent(onRequestPermission: () -> Unit) {
             text = "为了实时检测画面中的亮点，我们需要访问您的相机。\n\n" +
                     "没有相机权限，应用将无法正常工作。",
             style = MaterialTheme.typography.bodyLarge,
+            color = Color(0xFF9A9A9A),
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(bottom = 32.dp)
         )
@@ -1212,4 +1115,9 @@ fun PermissionRationaleContent(onRequestPermission: () -> Unit) {
         }
     }
 }
+
+
+
+
+
 

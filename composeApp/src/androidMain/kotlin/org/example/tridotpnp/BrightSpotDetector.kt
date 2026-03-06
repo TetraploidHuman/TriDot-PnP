@@ -203,10 +203,20 @@ class BrightSpotDetector {
         val searchRight = (roiRight?.coerceAtMost(width - 1) ?: (width - 1)).coerceAtLeast(searchLeft)
         val searchBottom = (roiBottom?.coerceAtMost(height - 1) ?: (height - 1)).coerceAtLeast(searchTop)
 
-        // 一次性读像素
-        val pixels = obtainPixelBuffer(width, height)
+        // 只读取ROI像素，避免每帧整图getPixels
+        val searchWidth = (searchRight - searchLeft + 1).coerceAtLeast(1)
+        val searchHeight = (searchBottom - searchTop + 1).coerceAtLeast(1)
+        val pixels = obtainPixelBuffer(searchWidth, searchHeight)
         try {
-            bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+            bitmap.getPixels(
+                pixels,
+                0,
+                searchWidth,
+                searchLeft,
+                searchTop,
+                searchWidth,
+                searchHeight
+            )
         } catch (_: Exception) {
             return emptyList()
         }
@@ -229,6 +239,8 @@ class BrightSpotDetector {
         data class Candidate(
             val x: Int,
             val y: Int,
+            val localX: Int,
+            val localY: Int,
             val score: Float,   // Top-N/Top-K 排序分数（允许与 raw 强度不同）
             val r: Float = 0f,  // 目标1 强度
             val g: Float = 0f,  // 目标2 强度
@@ -258,7 +270,7 @@ class BrightSpotDetector {
             val baseRadius = max(stepX, stepY)
             return (baseRadius * 1.5f).toInt()
                 .coerceAtLeast(minRefineRadius)
-                .coerceAtMost(min(width, height) / 4)
+                .coerceAtMost(min(searchWidth, searchHeight) / 4)
         }
 
         // -----------------------------
@@ -332,15 +344,18 @@ class BrightSpotDetector {
                 val cx = (i * stepX + stepX / 2).coerceIn(0, width - 1)
                 for (j in startJ..endJ) {
                     val cy = (j * stepY + stepY / 2).coerceIn(0, height - 1)
+                    val lx = cx - searchLeft
+                    val ly = cy - searchTop
+                    if (lx !in 0 until searchWidth || ly !in 0 until searchHeight) continue
                     val pwRaw = probWeightAt(cx, cy)
                     val pw = candidateProbWeight(pwRaw)
 
                     val intensities = calculateHSVIntensitiesFast(
                         pixels = pixels,
-                        bmpWidth = width,
-                        bmpHeight = height,
-                        centerX = cx,
-                        centerY = cy,
+                        bmpWidth = searchWidth,
+                        bmpHeight = searchHeight,
+                        centerX = lx,
+                        centerY = ly,
                         radiusX = stepX / 2,
                         radiusY = stepY / 2
                     ) ?: continue
@@ -352,9 +367,9 @@ class BrightSpotDetector {
                     val best = maxOf(rI, gI, bI) * pw
                     if (best <= threshold) continue
 
-                    pushTopN(reds, Candidate(cx, cy, score = redScore(rI, gI, bI) * pw, r = rI, g = gI, b = bI, probWeight = pwRaw), topN)
-                    pushTopN(greens, Candidate(cx, cy, score = greenScore(rI, gI, bI) * pw, r = rI, g = gI, b = bI, probWeight = pwRaw), topN)
-                    pushTopN(blues, Candidate(cx, cy, score = blueScore(rI, gI, bI) * pw, r = rI, g = gI, b = bI, probWeight = pwRaw), topN)
+                    pushTopN(reds, Candidate(cx, cy, lx, ly, score = redScore(rI, gI, bI) * pw, r = rI, g = gI, b = bI, probWeight = pwRaw), topN)
+                    pushTopN(greens, Candidate(cx, cy, lx, ly, score = greenScore(rI, gI, bI) * pw, r = rI, g = gI, b = bI, probWeight = pwRaw), topN)
+                    pushTopN(blues, Candidate(cx, cy, lx, ly, score = blueScore(rI, gI, bI) * pw, r = rI, g = gI, b = bI, probWeight = pwRaw), topN)
                 }
             }
 
@@ -395,9 +410,11 @@ class BrightSpotDetector {
                         val triCenterY = (rC.y + gC.y + bC.y) / 3f
 
                         // 获取中心像素亮度（总亮度V）
-                        val centerXInt = triCenterX.toInt().coerceIn(0, width - 1)
-                        val centerYInt = triCenterY.toInt().coerceIn(0, height - 1)
-                        val centerPixel = pixels[centerYInt * width + centerXInt]
+                        val centerXInt = triCenterX.toInt().coerceIn(searchLeft, searchRight)
+                        val centerYInt = triCenterY.toInt().coerceIn(searchTop, searchBottom)
+                        val centerLocalX = centerXInt - searchLeft
+                        val centerLocalY = centerYInt - searchTop
+                        val centerPixel = pixels[centerLocalY * searchWidth + centerLocalX]
                         val cr = ((centerPixel shr 16) and 0xFF).toFloat()
                         val cg = ((centerPixel shr 8) and 0xFF).toFloat()
                         val cb = (centerPixel and 0xFF).toFloat()
@@ -434,10 +451,10 @@ class BrightSpotDetector {
                 if (c == null) return
                 val refined = refineSpotCenterIterativeFastHSV(
                     pixels = pixels,
-                    bmpWidth = width,
-                    bmpHeight = height,
-                    centerX = c.x,
-                    centerY = c.y,
+                    bmpWidth = searchWidth,
+                    bmpHeight = searchHeight,
+                    centerX = c.localX,
+                    centerY = c.localY,
                     radius = refineRadius,
                     preferChannel = color
                 )
@@ -449,7 +466,7 @@ class BrightSpotDetector {
                 }
                 result.add(
                     BrightSpot(
-                        position = refined,
+                        position = Offset(refined.x + searchLeft, refined.y + searchTop),
                         brightness = brightness,
                         color = color,
                         redIntensity = c.r,
@@ -481,16 +498,19 @@ class BrightSpotDetector {
             val cx = (i * stepX + stepX / 2).coerceIn(0, width - 1)
             for (j in startJ..endJ) {
                 val cy = (j * stepY + stepY / 2).coerceIn(0, height - 1)
+                val lx = cx - searchLeft
+                val ly = cy - searchTop
+                if (lx !in 0 until searchWidth || ly !in 0 until searchHeight) continue
                 val pwRaw = probWeightAt(cx, cy)
                 val pw = candidateProbWeight(pwRaw)
 
                 if (detectColoredLeds) {
                     val intensities = calculateHSVIntensitiesFast(
                         pixels = pixels,
-                        bmpWidth = width,
-                        bmpHeight = height,
-                        centerX = cx,
-                        centerY = cy,
+                        bmpWidth = searchWidth,
+                        bmpHeight = searchHeight,
+                        centerX = lx,
+                        centerY = ly,
                         radiusX = stepX / 2,
                         radiusY = stepY / 2
                     ) ?: continue
@@ -502,19 +522,19 @@ class BrightSpotDetector {
 
                     if (maxSpots == null) {
                         if (score > threshold) {
-                            candidates.add(Candidate(cx, cy, score, rI, gI, bI, probWeight = pwRaw))
+                            candidates.add(Candidate(cx, cy, lx, ly, score, rI, gI, bI, probWeight = pwRaw))
                         }
                     } else {
-                        pushTopK(candidates, Candidate(cx, cy, score, rI, gI, bI, probWeight = pwRaw), k)
+                        pushTopK(candidates, Candidate(cx, cy, lx, ly, score, rI, gI, bI, probWeight = pwRaw), k)
                     }
                 } else {
                     // 绿色模式仍保留你原来的“绿相对强度”逻辑
                     val greenIntensity = calculateRegionGreenIntensityFast(
                         pixels = pixels,
-                        bmpWidth = width,
-                        bmpHeight = height,
-                        centerX = cx,
-                        centerY = cy,
+                        bmpWidth = searchWidth,
+                        bmpHeight = searchHeight,
+                        centerX = lx,
+                        centerY = ly,
                         radiusX = stepX / 2,
                         radiusY = stepY / 2
                     )
@@ -523,10 +543,10 @@ class BrightSpotDetector {
 
                     if (maxSpots == null) {
                         if (weightedGreen > threshold) {
-                            candidates.add(Candidate(cx, cy, weightedGreen, probWeight = pwRaw))
+                            candidates.add(Candidate(cx, cy, lx, ly, weightedGreen, probWeight = pwRaw))
                         }
                     } else {
-                        pushTopK(candidates, Candidate(cx, cy, weightedGreen, probWeight = pwRaw), k)
+                        pushTopK(candidates, Candidate(cx, cy, lx, ly, weightedGreen, probWeight = pwRaw), k)
                     }
                 }
             }
@@ -546,16 +566,16 @@ class BrightSpotDetector {
                 }
                 val refined = refineSpotCenterIterativeFastHSV(
                     pixels = pixels,
-                    bmpWidth = width,
-                    bmpHeight = height,
-                    centerX = c.x,
-                    centerY = c.y,
+                    bmpWidth = searchWidth,
+                    bmpHeight = searchHeight,
+                    centerX = c.localX,
+                    centerY = c.localY,
                     radius = refineRadius,
                     preferChannel = prefer
                 )
                 refinedSpots.add(
                     BrightSpot(
-                        position = refined,
+                        position = Offset(refined.x + searchLeft, refined.y + searchTop),
                         brightness = c.score,
                         color = LedColor.UNKNOWN,
                         redIntensity = c.r,
@@ -566,16 +586,16 @@ class BrightSpotDetector {
             } else {
                 val refined = refineSpotCenterIterativeFastRGB(
                     pixels = pixels,
-                    bmpWidth = width,
-                    bmpHeight = height,
-                    centerX = c.x,
-                    centerY = c.y,
+                    bmpWidth = searchWidth,
+                    bmpHeight = searchHeight,
+                    centerX = c.localX,
+                    centerY = c.localY,
                     radius = refineRadius,
                     preferChannel = LedColor.GREEN
                 )
                 refinedSpots.add(
                     BrightSpot(
-                        position = refined,
+                        position = Offset(refined.x + searchLeft, refined.y + searchTop),
                         brightness = c.score,
                         color = LedColor.GREEN
                     )

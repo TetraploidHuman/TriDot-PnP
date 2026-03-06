@@ -167,7 +167,8 @@ fun BrightSpotDetectionApp() {
                         // 释放旧的bitmap
                         calibrationBitmap?.recycle()
                         calibrationBitmap = bitmap
-                    }
+                    },
+                    captureBitmapForCalibration = isCalibrating
                 )
 
                 // 校准标记（校准模式下显示）

@@ -51,6 +51,7 @@ fun CameraPreview(
     enableRoiOptimization: Boolean = true,  // 是否启用ROI优化
     onBrightSpotsDetected: (List<BrightSpot>, Pair<Int, Int>?) -> Unit = { _, _ -> },
     onBitmapCaptured: (Bitmap) -> Unit = {},
+    captureBitmapForCalibration: Boolean = false,
     onFpsUpdate: (Float) -> Unit = {},  // 帧率更新回调
     // 分区参数（可调）
     maxDepth: Int = 13,            // 分区树最大深度（更大值 -> 更细）
@@ -101,6 +102,7 @@ fun CameraPreview(
     val currentGridSize = rememberUpdatedState(gridSize)
     val currentProbabilityMatrix = rememberUpdatedState(probabilityMatrix)
     val currentEnableRoiOptimization = rememberUpdatedState(enableRoiOptimization)
+    val currentCaptureBitmapForCalibration = rememberUpdatedState(captureBitmapForCalibration)
     var skipFrames by remember { mutableIntStateOf(0) }
     var lastModeIsRGB by remember { mutableStateOf(maxSpots == 3) }
     // 模式切换时短暂丢帧，避免卡顿，并清除跟踪状态
@@ -490,6 +492,7 @@ fun CameraPreview(
                                             }
                                             onBrightSpotsDetected(spots, size)
                                         },
+                                        captureBitmapForCalibration = currentCaptureBitmapForCalibration.value,
                                         onBitmapCaptured = onBitmapCaptured
                                     )
                                     imageProxy.close()
@@ -631,23 +634,6 @@ fun CameraPreview(
                     }
                 }
 
-                data class DrawRectInfo(
-                    val node: PlacedRect,
-                    val strokeW: Float,
-                    val alpha: Float
-                )
-                fun collectPartitionRects(node: PlacedRect, rects: MutableList<DrawRectInfo>) {
-                    if (node.depth > maxDrawDepth) return
-                    val depthRatio = node.depth.toFloat() / maxDrawDepth.toFloat()
-                    val strokeW = (if (node.depth <= 2) 2.6f else (1f + (1f - depthRatio) * 1.6f)).coerceAtLeast(0.6f)
-                    val alpha = (0.14f + (1f - depthRatio) * 0.16f).coerceIn(0.06f, 0.7f)
-                    rects.add(DrawRectInfo(node, strokeW, alpha))
-                    node.children.forEach { collectPartitionRects(it, rects) }
-                }
-                val partitionRects = mutableListOf<DrawRectInfo>()
-                collectPartitionRects(rootRect, partitionRects)
-
-                // 批量绘制所有分区矩形
                 val pBuf = FloatArray(8) // 复用FloatArray，避免频繁分配
 //                val baseColor = Color(0xFF222222) // 预定义基础颜色
 //                partitionRects.forEach { info ->
@@ -1257,6 +1243,7 @@ private fun processImage(
     limitRegion: ManualRoiCoords? = null,
     onRoiInfo: ((RoiVisualizationInfo?) -> Unit)? = null,
     onSpotsDetected: (List<BrightSpot>, Pair<Int, Int>, Boolean) -> Unit,
+    captureBitmapForCalibration: Boolean = false,
     onBitmapCaptured: (Bitmap) -> Unit = {}
 ) {
     try {
@@ -1518,7 +1505,9 @@ private fun processImage(
         val refinedSpots = refineSpotsOnOriginal(rotatedBitmap, spots, gridSize)
         onSpotsDetected(refinedSpots, Pair(rotatedBitmap.width, rotatedBitmap.height), foundInManualRoi)
 
-        onBitmapCaptured(rotatedBitmap.copy(rotatedBitmap.config ?: Bitmap.Config.ARGB_8888, false))
+        if (captureBitmapForCalibration) {
+            onBitmapCaptured(rotatedBitmap.copy(rotatedBitmap.config ?: Bitmap.Config.ARGB_8888, false))
+        }
 
         if (rotatedBitmap != bitmap) rotatedBitmap.recycle()
         if (workingBitmap != rotatedBitmap) workingBitmap.recycle()

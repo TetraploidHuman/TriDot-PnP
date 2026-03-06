@@ -1,4 +1,4 @@
-package org.example.tridotpnp
+﻿package org.example.tridotpnp
 
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -67,6 +67,28 @@ class BrightSpotDetector {
     var hsvSatWeight: Float = 0.6f
     var hsvValWeight: Float = 0.3f
     var hsvSharpness: Float = 8.0f        // 越大越“挑剔”（相似度衰减更快）
+
+    // ===== 三色组打分权重（可调）=====
+    @Volatile var triShapePenaltyWeight: Float = 0.2f
+    @Volatile var triGeometryPenaltyWeight: Float = 0.6f
+    @Volatile var triPurityBoostWeight: Float = 0.25f
+    @Volatile var triCenterBlackWeight: Float = 0.7f
+    @Volatile var triColorScoreWeight: Float = 1f
+
+    // ===== 概率矩阵影响强度（可调）=====
+    @Volatile var probabilityCandidateExponent: Float = 1f
+    @Volatile var probabilityGroupExponent: Float = 1f
+    @Volatile var probabilityWeightFloor: Float = 0.01f
+
+    private fun candidateProbWeight(raw: Float): Float {
+        val clamped = raw.coerceAtLeast(probabilityWeightFloor)
+        return clamped.pow(probabilityCandidateExponent.coerceAtLeast(0f))
+    }
+
+    private fun groupProbWeight(rawAverage: Float): Float {
+        val clamped = rawAverage.coerceAtLeast(probabilityWeightFloor)
+        return clamped.pow(probabilityGroupExponent.coerceAtLeast(0f))
+    }
 
     private fun obtainPixelBuffer(w: Int, h: Int): IntArray {
         val neededSize = w * h
@@ -164,7 +186,8 @@ class BrightSpotDetector {
         roiLeft: Int? = null,
         roiTop: Int? = null,
         roiRight: Int? = null,
-        roiBottom: Int? = null
+        roiBottom: Int? = null,
+        probabilityMatrix: ProbabilityMatrix128x96? = null
     ): List<BrightSpot> {
 
         val width = bitmap.width
@@ -198,13 +221,19 @@ class BrightSpotDetector {
         val startJ = (searchTop / stepY).coerceAtLeast(0)
         val endJ = ((searchBottom + stepY - 1) / stepY).coerceAtMost(gridSize - 1)
 
+        fun probWeightAt(x: Int, y: Int): Float {
+            val w = probabilityMatrix?.weightAtPixel(x, y, width, height) ?: 1f
+            return w.coerceAtLeast(probabilityWeightFloor)
+        }
+
         data class Candidate(
             val x: Int,
             val y: Int,
             val score: Float,   // Top-N/Top-K 排序分数（允许与 raw 强度不同）
             val r: Float = 0f,  // 目标1 强度
             val g: Float = 0f,  // 目标2 强度
-            val b: Float = 0f   // 目标3 强度
+            val b: Float = 0f,  // 目标3 强度
+            val probWeight: Float = 1f
         )
 
         fun pushTopK(list: MutableList<Candidate>, cand: Candidate, k: Int) {
@@ -237,20 +266,13 @@ class BrightSpotDetector {
         // -----------------------------
         if (detectColoredLeds && maxSpots == 3) {
 
-            val topN = 25
+            val topN = 16
             val base = max(stepX, stepY).toFloat()
 
             val minPairDist = base * 2f
             val maxPairDist = base * 20.0f
             val minPairDist2 = minPairDist * minPairDist
             val maxPairDist2 = maxPairDist * maxPairDist
-
-            // 形状/几何惩罚权重
-            val shapePenaltyW = 0.2f                  // 等边偏好（软）
-            val geoPenaltyW = 0.6f                    // 超出距离范围的惩罚（软）
-
-            // “纯度加分”：强调某个目标强度要明显胜过另外两个（不硬阈值，避免抖动掉候选）
-            val purityBoostW = 0.25f
 
             fun dist2(ax: Int, ay: Int, bx: Int, by: Int): Float {
                 val dx = (ax - bx).toFloat()
@@ -287,19 +309,19 @@ class BrightSpotDetector {
             fun redScore(rI: Float, gI: Float, bI: Float): Float {
                 val denom = (gI + bI + 1e-3f)
                 val purity = rI / denom
-                return rI * (1f + purityBoostW * ln(1f + purity))
+                return rI * (1f + triPurityBoostWeight * ln(1f + purity))
             }
 
             fun greenScore(rI: Float, gI: Float, bI: Float): Float {
                 val denom = (rI + bI + 1e-3f)
                 val purity = gI / denom
-                return gI * (1f + purityBoostW * ln(1f + purity))
+                return gI * (1f + triPurityBoostWeight * ln(1f + purity))
             }
 
             fun blueScore(rI: Float, gI: Float, bI: Float): Float {
                 val denom = (rI + gI + 1e-3f)
                 val purity = bI / denom
-                return bI * (1f + purityBoostW * ln(1f + purity))
+                return bI * (1f + triPurityBoostWeight * ln(1f + purity))
             }
 
             val reds = mutableListOf<Candidate>()
@@ -310,6 +332,8 @@ class BrightSpotDetector {
                 val cx = (i * stepX + stepX / 2).coerceIn(0, width - 1)
                 for (j in startJ..endJ) {
                     val cy = (j * stepY + stepY / 2).coerceIn(0, height - 1)
+                    val pwRaw = probWeightAt(cx, cy)
+                    val pw = candidateProbWeight(pwRaw)
 
                     val intensities = calculateHSVIntensitiesFast(
                         pixels = pixels,
@@ -325,12 +349,12 @@ class BrightSpotDetector {
                     val gI = intensities.second
                     val bI = intensities.third
 
-                    val best = maxOf(rI, gI, bI)
+                    val best = maxOf(rI, gI, bI) * pw
                     if (best <= threshold) continue
 
-                    pushTopN(reds, Candidate(cx, cy, score = redScore(rI, gI, bI), r = rI, g = gI, b = bI), topN)
-                    pushTopN(greens, Candidate(cx, cy, score = greenScore(rI, gI, bI), r = rI, g = gI, b = bI), topN)
-                    pushTopN(blues, Candidate(cx, cy, score = blueScore(rI, gI, bI), r = rI, g = gI, b = bI), topN)
+                    pushTopN(reds, Candidate(cx, cy, score = redScore(rI, gI, bI) * pw, r = rI, g = gI, b = bI, probWeight = pwRaw), topN)
+                    pushTopN(greens, Candidate(cx, cy, score = greenScore(rI, gI, bI) * pw, r = rI, g = gI, b = bI, probWeight = pwRaw), topN)
+                    pushTopN(blues, Candidate(cx, cy, score = blueScore(rI, gI, bI) * pw, r = rI, g = gI, b = bI, probWeight = pwRaw), topN)
                 }
             }
 
@@ -363,7 +387,9 @@ class BrightSpotDetector {
                         } else 1f
 
                         // 颜色分数：用 raw 强度（相似度×亮度）
-                        val colorScore = rC.r + gC.g + bC.b
+                        val colorScore = (rC.r + gC.g + bC.b) * triColorScoreWeight
+                        val triProbWeightRaw = (rC.probWeight + gC.probWeight + bC.probWeight) / 3f
+                        val triProbWeight = groupProbWeight(triProbWeightRaw)
 
                         val triCenterX = (rC.x + gC.x + bC.x) / 3f
                         val triCenterY = (rC.y + gC.y + bC.y) / 3f
@@ -378,16 +404,18 @@ class BrightSpotDetector {
                         val vCenter = (cr + cg + cb) / (255f * 3f)  // 0..1
 
                         // 偏黑得分：越黑越高
-                        val centerBlackScore = (1f - vCenter).pow(2) * 0.7f  // 权重可调
+                        val centerBlackScore = (1f - vCenter).pow(2) * triCenterBlackWeight
 
                         val groupScore =
                             colorScore -
-                                    shapePenaltyW * colorScore * shapePenalty -
-                                    geoPenaltyW * colorScore * geoPenalty +
+                                    triShapePenaltyWeight * colorScore * shapePenalty -
+                                    triGeometryPenaltyWeight * colorScore * geoPenalty +
                                     centerBlackScore
 
-                        if (groupScore > bestGroupScore) {
-                            bestGroupScore = groupScore
+                        val weightedGroupScore = groupScore * triProbWeight
+
+                        if (weightedGroupScore > bestGroupScore) {
+                            bestGroupScore = weightedGroupScore
                             bestTripleR = rC
                             bestTripleG = gC
                             bestTripleB = bC
@@ -453,6 +481,8 @@ class BrightSpotDetector {
             val cx = (i * stepX + stepX / 2).coerceIn(0, width - 1)
             for (j in startJ..endJ) {
                 val cy = (j * stepY + stepY / 2).coerceIn(0, height - 1)
+                val pwRaw = probWeightAt(cx, cy)
+                val pw = candidateProbWeight(pwRaw)
 
                 if (detectColoredLeds) {
                     val intensities = calculateHSVIntensitiesFast(
@@ -468,14 +498,14 @@ class BrightSpotDetector {
                     val rI = intensities.first
                     val gI = intensities.second
                     val bI = intensities.third
-                    val score = maxOf(rI, gI, bI)
+                    val score = maxOf(rI, gI, bI) * pw
 
                     if (maxSpots == null) {
                         if (score > threshold) {
-                            candidates.add(Candidate(cx, cy, score, rI, gI, bI))
+                            candidates.add(Candidate(cx, cy, score, rI, gI, bI, probWeight = pwRaw))
                         }
                     } else {
-                        pushTopK(candidates, Candidate(cx, cy, score, rI, gI, bI), k)
+                        pushTopK(candidates, Candidate(cx, cy, score, rI, gI, bI, probWeight = pwRaw), k)
                     }
                 } else {
                     // 绿色模式仍保留你原来的“绿相对强度”逻辑
@@ -489,12 +519,14 @@ class BrightSpotDetector {
                         radiusY = stepY / 2
                     )
 
+                    val weightedGreen = greenIntensity * pw
+
                     if (maxSpots == null) {
-                        if (greenIntensity > threshold) {
-                            candidates.add(Candidate(cx, cy, greenIntensity))
+                        if (weightedGreen > threshold) {
+                            candidates.add(Candidate(cx, cy, weightedGreen, probWeight = pwRaw))
                         }
                     } else {
-                        pushTopK(candidates, Candidate(cx, cy, greenIntensity), k)
+                        pushTopK(candidates, Candidate(cx, cy, weightedGreen, probWeight = pwRaw), k)
                     }
                 }
             }

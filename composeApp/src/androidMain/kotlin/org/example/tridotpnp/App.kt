@@ -1,4 +1,4 @@
-package org.example.tridotpnp
+﻿package org.example.tridotpnp
 
 import android.Manifest
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
@@ -70,6 +70,7 @@ fun BrightSpotDetectionApp() {
     var maxSpots by remember { mutableIntStateOf(3) } // 默认显示最亮的1个点
     var exposureCompensation by remember { mutableIntStateOf(0) } // 曝光补偿，0为默认值
     var gridSize by remember { mutableIntStateOf(256) } // 检测网格大小，默认50x50
+    var probabilityMatrix by remember { mutableStateOf(buildManualProbabilityMatrix128x96()) }
     var knownDistance by remember { mutableFloatStateOf(100f) } // 已知的两点距离（毫米）
     var pnpResult by remember { mutableStateOf<PnPDistanceCalculator.PnPResult?>(null) }
     var imageSize by remember { mutableStateOf<Pair<Int, Int>?>(null) }
@@ -85,7 +86,21 @@ fun BrightSpotDetectionApp() {
 
     val context = androidx.compose.ui.platform.LocalContext.current
     val pnpCalculator = remember { PnPDistanceCalculator() }
-    val detector = remember { BrightSpotDetector() }
+    val detector = remember {
+        BrightSpotDetector().apply {
+            // 三色打分权重集中在这里，后续调参只改这一段
+            triShapePenaltyWeight = 0.2f      // 三角形形状惩罚权重：越大越偏好接近等边三角形（建议 0.0~1.0）
+            triGeometryPenaltyWeight = 0.6f   // 边长范围惩罚权重：越大越严格限制点间距离（建议 0.0~1.5）
+            triPurityBoostWeight = 0.25f      // 颜色纯度加分权重：越大越强调“该色明显强于另外两色”（建议 0.0~1.0）
+            triCenterBlackWeight = 0.7f       // 三色中点偏黑加分权重：越大越偏好中间暗的结构（建议 0.0~2.0）
+            triColorScoreWeight = 1.0f        // 颜色总分基础权重：整体放大/缩小颜色项影响（建议 0.5~2.0）
+
+            // 概率矩阵影响强度（1.0 = 线性）
+            probabilityCandidateExponent = 1.0f // 候选阶段概率指数：>1 更压低低概率区域，<1 更平缓（建议 0.5~2.5）
+            probabilityGroupExponent = 1.0f     // 组合阶段概率指数：控制最终三点组受矩阵影响强弱（建议 0.5~2.5）
+            probabilityWeightFloor = 0.01f      // 概率下限：避免某些区域权重过低导致完全不可检（建议 0.01~0.2）
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         when {
@@ -96,6 +111,7 @@ fun BrightSpotDetectionApp() {
                     maxSpots = maxSpots,
                     exposureCompensation = exposureCompensation,
                     gridSize = gridSize,
+                    probabilityMatrix = probabilityMatrix,
                     detector = detector,  // 传递detector实例
                     enableRoiOptimization = enableRoiOptimization,
                     onFpsUpdate = { newFps ->
@@ -1206,3 +1222,4 @@ fun PermissionRationaleContent(onRequestPermission: () -> Unit) {
         }
     }
 }
+

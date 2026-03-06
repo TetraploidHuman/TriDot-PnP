@@ -1,4 +1,4 @@
-package org.example.tridotpnp
+﻿package org.example.tridotpnp
 
 import android.graphics.Bitmap
 import android.graphics.Matrix
@@ -46,6 +46,7 @@ fun CameraPreview(
     maxSpots: Int? = null,
     exposureCompensation: Int = 0,
     gridSize: Int = 50,
+    probabilityMatrix: ProbabilityMatrix128x96? = null,
     detector: BrightSpotDetector,  // 必须在工程中提供实现
     enableRoiOptimization: Boolean = true,  // 是否启用ROI优化
     onBrightSpotsDetected: (List<BrightSpot>, Pair<Int, Int>?) -> Unit = { _, _ -> },
@@ -98,6 +99,7 @@ fun CameraPreview(
     val currentMaxSpots = rememberUpdatedState(maxSpots)
     val currentExposureCompensation = rememberUpdatedState(exposureCompensation)
     val currentGridSize = rememberUpdatedState(gridSize)
+    val currentProbabilityMatrix = rememberUpdatedState(probabilityMatrix)
     val currentEnableRoiOptimization = rememberUpdatedState(enableRoiOptimization)
     var skipFrames by remember { mutableIntStateOf(0) }
     var lastModeIsRGB by remember { mutableStateOf(maxSpots == 3) }
@@ -428,6 +430,7 @@ fun CameraPreview(
                                         detector = detector,
                                         maxSpots = currentMaxSpots.value,
                                         gridSize = currentGridSize.value,
+                                        probabilityMatrix = currentProbabilityMatrix.value,
                                         enableRoiOptimization = currentEnableRoiOptimization.value,
                                         lastTriSpots = if (currentEnableRoiOptimization.value) lastTriSpots else null,
                                         lastTriSpotsImageSize = if (currentEnableRoiOptimization.value) lastTriSpotsImageSize else null,
@@ -556,6 +559,41 @@ fun CameraPreview(
                 val transform = Matrix().apply {
                     postScale(scale, scale)
                     postTranslate(dx, dy)
+                }
+
+                // 概率矩阵可视化：低概率更灰白，高概率更透明
+                probabilityMatrix?.let { matrix ->
+                    val rows = ProbabilityMatrix128x96.ROWS
+                    val cols = ProbabilityMatrix128x96.COLS
+                    val cellWidth = imageWidth.toFloat() / cols.toFloat()
+                    val cellHeight = imageHeight.toFloat() / rows.toFloat()
+
+                    val rowStep = 2
+                    val colStep = 2
+                    val lowWeight = 0.2f
+                    val highWeight = 0.8f
+                    val weightRange = (highWeight - lowWeight).coerceAtLeast(0.001f)
+                    val hazeColor = Color(0xFFF2F2F2)
+
+                    for (row in 0 until rows step rowStep) {
+                        val base = row * cols
+                        for (col in 0 until cols step colStep) {
+                            val weight = matrix.values[base + col]
+                            val normalized = ((weight - lowWeight) / weightRange).coerceIn(0f, 1f)
+                            val alpha = (0.50f * (1f - normalized)).coerceIn(0.02f, 0.50f)
+
+                            val left = dx + col * cellWidth * scale
+                            val top = dy + row * cellHeight * scale
+                            val drawW = cellWidth * scale * colStep
+                            val drawH = cellHeight * scale * rowStep
+
+                            drawRect(
+                                color = hazeColor.copy(alpha = alpha),
+                                topLeft = Offset(left, top),
+                                size = androidx.compose.ui.geometry.Size(drawW, drawH)
+                            )
+                        }
+                    }
                 }
 
                 // 使用缓存的分区树（已经基于 previewSize 构建或为 null）
@@ -1211,6 +1249,7 @@ private fun processImage(
     detector: BrightSpotDetector,
     maxSpots: Int? = null,
     gridSize: Int = 50,
+    probabilityMatrix: ProbabilityMatrix128x96? = null,
     enableRoiOptimization: Boolean = true,
     lastTriSpots: Triple<Offset, Offset, Offset>? = null,
     lastTriSpotsImageSize: Pair<Int, Int>? = null,
@@ -1311,7 +1350,8 @@ private fun processImage(
                 roiLeft = roiLeft,
                 roiTop = roiTop,
                 roiRight = roiRight,
-                roiBottom = roiBottom
+                roiBottom = roiBottom,
+                probabilityMatrix = probabilityMatrix
             )
 
             val foundFlag = manualRoiSpots.size == 3 && maxSpots == 3
@@ -1361,7 +1401,8 @@ private fun processImage(
                     roiLeft = roiLeft,
                     roiTop = roiTop,
                     roiRight = roiRight,
-                    roiBottom = roiBottom
+                    roiBottom = roiBottom,
+                    probabilityMatrix = probabilityMatrix
                 )
 
                 // 三色点稳定性判断
@@ -1423,14 +1464,16 @@ private fun processImage(
                         roiLeft = it.left,
                         roiTop = it.top,
                         roiRight = it.right,
-                        roiBottom = it.bottom
+                        roiBottom = it.bottom,
+                        probabilityMatrix = probabilityMatrix
                     )
                 } ?: detector.detectBrightSpots(
                     bitmap = workingBitmap,
                     threshold = 80f,
                     gridSize = gridSize,
                     maxSpots = maxSpots,
-                    detectColoredLeds = true
+                    detectColoredLeds = true,
+                    probabilityMatrix = probabilityMatrix
                 )
                 Pair(searchResult, false)
             } else {
@@ -1451,14 +1494,16 @@ private fun processImage(
                     roiLeft = it.left,
                     roiTop = it.top,
                     roiRight = it.right,
-                    roiBottom = it.bottom
+                    roiBottom = it.bottom,
+                    probabilityMatrix = probabilityMatrix
                 )
             } ?: detector.detectBrightSpots(
                 bitmap = workingBitmap,
                 threshold = 80f,
                 gridSize = gridSize,
                 maxSpots = maxSpots,
-                detectColoredLeds = (maxSpots == 3)
+                detectColoredLeds = (maxSpots == 3),
+                probabilityMatrix = probabilityMatrix
             )
             Pair(searchResult, false)
         }

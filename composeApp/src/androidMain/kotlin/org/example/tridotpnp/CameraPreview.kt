@@ -484,7 +484,7 @@ fun CameraPreview(
             factory = { ctx ->
                 val previewView = PreviewView(ctx)
                 // 使用不裁剪的缩放策略，便于一致的矩阵映射
-                previewView.scaleType = PreviewView.ScaleType.FIT_CENTER
+                previewView.scaleType = PreviewView.ScaleType.FIT_START
                 previewViewRef = previewView
 
                 val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
@@ -656,10 +656,10 @@ fun CameraPreview(
             val pv = previewViewRef
             if (previewSize != null && pv != null) {
                 val (imageWidth, imageHeight) = previewSize!!
-                // 构建从图像坐标到画布坐标的变换矩阵（匹配 FIT_CENTER 策略）
+                // 构建从图像坐标到画布坐标的变换矩阵（匹配 FIT_START 策略）
                 val scale = kotlin.math.min(size.width / imageWidth, size.height / imageHeight)
-                val dx = (size.width - imageWidth * scale) / 2f
-                val dy = (size.height - imageHeight * scale) / 2f
+                val dx = 0f
+                val dy = 0f
                 val transform = Matrix().apply {
                     postScale(scale, scale)
                     postTranslate(dx, dy)

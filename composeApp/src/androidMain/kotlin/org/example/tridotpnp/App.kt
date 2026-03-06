@@ -7,7 +7,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -29,8 +28,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.DividerDefaults
@@ -81,7 +78,6 @@ fun BrightSpotDetectionApp() {
     var imageSize by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var fps by remember { mutableFloatStateOf(0f) } // 识别帧率
     var enableRoiOptimization by remember { mutableStateOf(true) } // ROI优化开关，默认启用
-    var isControlPanelExpanded by remember { mutableStateOf(false) } // 控制面板展开状态，默认展开
     var showSettings by remember { mutableStateOf(false) } // 设置页面显示状态
 
     // 颜色校准相关
@@ -110,82 +106,88 @@ fun BrightSpotDetectionApp() {
     Box(modifier = Modifier.fillMaxSize()) {
         when {
             cameraPermissionState.status.isGranted -> {
-                // 相机预览
-                CameraPreview(
-                    modifier = Modifier.fillMaxSize(),
-                    maxSpots = maxSpots,
-                    exposureCompensation = exposureCompensation,
-                    gridSize = gridSize,
-                    probabilityMatrix = probabilityMatrix,
-                    detector = detector,  // 传递detector实例
-                    enableRoiOptimization = enableRoiOptimization,
-                    onFpsUpdate = { newFps ->
-                        fps = newFps
-                    },
-                    onBrightSpotsDetected = { spots, size ->
-                        detectedSpotsCount = spots.size
-                        detectedSpots = spots
-                        imageSize = size
+                val previewAreaModifier = Modifier
+                    .align(Alignment.TopStart)
+                    .fillMaxHeight()
+                    .padding(end = 320.dp)
 
-                        // 根据选择的点数执行不同的PnP计算
-                        when (maxSpots) {// 3点模式：RGB三色LED，计算完整6DOF姿态
-                            3 if spots.size == 3 && size != null -> {
-                                // 识别红、绿、蓝三个点
-                                val redSpot = spots.find { it.color == LedColor.RED }
-                                val greenSpot = spots.find { it.color == LedColor.GREEN }
-                                val blueSpot = spots.find { it.color == LedColor.BLUE }
+                Box(modifier = previewAreaModifier) {
+                    // 相机预览
+                    CameraPreview(
+                        modifier = Modifier.fillMaxSize(),
+                        maxSpots = maxSpots,
+                        exposureCompensation = exposureCompensation,
+                        gridSize = gridSize,
+                        probabilityMatrix = probabilityMatrix,
+                        detector = detector,  // 传递detector实例
+                        enableRoiOptimization = enableRoiOptimization,
+                        onFpsUpdate = { newFps ->
+                            fps = newFps
+                        },
+                        onBrightSpotsDetected = { spots, size ->
+                            detectedSpotsCount = spots.size
+                            detectedSpots = spots
+                            imageSize = size
 
-                                pnpResult =
-                                    if (redSpot != null && greenSpot != null && blueSpot != null) {
-                                        pnpCalculator.calculate3PointPnP(
-                                            redPoint = redSpot.position,
-                                            greenPoint = greenSpot.position,
-                                            bluePoint = blueSpot.position,
-                                            triangleEdgeLength = knownDistance,
-                                            focalLength = null,
-                                            imageWidth = size.first,
-                                            imageHeight = size.second
-                                        )
-                                    } else {
-                                        null  // 未检测到完整的RGB三色
-                                    }
+                            // 根据选择的点数执行不同的PnP计算
+                            when (maxSpots) {// 3点模式：RGB三色LED，计算完整6DOF姿态
+                                3 if spots.size == 3 && size != null -> {
+                                    // 识别红、绿、蓝三个点
+                                    val redSpot = spots.find { it.color == LedColor.RED }
+                                    val greenSpot = spots.find { it.color == LedColor.GREEN }
+                                    val blueSpot = spots.find { it.color == LedColor.BLUE }
+
+                                    pnpResult =
+                                        if (redSpot != null && greenSpot != null && blueSpot != null) {
+                                            pnpCalculator.calculate3PointPnP(
+                                                redPoint = redSpot.position,
+                                                greenPoint = greenSpot.position,
+                                                bluePoint = blueSpot.position,
+                                                triangleEdgeLength = knownDistance,
+                                                focalLength = null,
+                                                imageWidth = size.first,
+                                                imageHeight = size.second
+                                            )
+                                        } else {
+                                            null  // 未检测到完整的RGB三色
+                                        }
+                                }
+
+                                // 2点模式：相同颜色LED，计算距离和方向
+                                2 if spots.size == 2 && size != null -> {
+                                    pnpResult = pnpCalculator.calculate2PointPnP(
+                                        point1 = spots[0].position,
+                                        point2 = spots[1].position,
+                                        realDistance = knownDistance,
+                                        focalLength = null,
+                                        imageWidth = size.first,
+                                        imageHeight = size.second
+                                    )
+                                }
+
+                                else -> {
+                                    pnpResult = null
+                                }
                             }
+                        },
+                        onBitmapCaptured = { bitmap ->
+                            // 释放旧的bitmap
+                            calibrationBitmap?.recycle()
+                            calibrationBitmap = bitmap
+                        },
+                        captureBitmapForCalibration = isCalibrating
+                    )
 
-                            // 2点模式：相同颜色LED，计算距离和方向
-                            2 if spots.size == 2 && size != null -> {
-                                pnpResult = pnpCalculator.calculate2PointPnP(
-                                    point1 = spots[0].position,
-                                    point2 = spots[1].position,
-                                    realDistance = knownDistance,
-                                    focalLength = null,
-                                    imageWidth = size.first,
-                                    imageHeight = size.second
-                                )
-                            }
-
-                            else -> {
-                                pnpResult = null
-                            }
-                        }
-                    },
-                    onBitmapCaptured = { bitmap ->
-                        // 释放旧的bitmap
-                        calibrationBitmap?.recycle()
-                        calibrationBitmap = bitmap
-                    },
-                    captureBitmapForCalibration = isCalibrating
-                )
-
-                // 校准标记（校准模式下显示）
-                if (isCalibrating && maxSpots == 3) {
-                    // Canvas层：不拦截触摸事件，让事件穿透到CameraPreview进行ROI选择
-                    Canvas(
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        val centerX = size.width / 2f
-                        val centerY = size.height / 2f
-                        // 使用屏幕最小尺寸计算，确保在横屏和竖屏下都有合适的大小
-                        val calibrationRadius = kotlin.math.min(size.width, size.height) * 0.20f
+                    // 校准标记（校准模式下显示）
+                    if (isCalibrating && maxSpots == 3) {
+                        // Canvas层：不拦截触摸事件，让事件穿透到CameraPreview进行ROI选择
+                        Canvas(
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            val centerX = size.width / 2f
+                            val centerY = size.height / 2f
+                            // 使用屏幕最小尺寸计算，确保在横屏和竖屏下都有合适的大小
+                            val calibrationRadius = kotlin.math.min(size.width, size.height) * 0.20f
 
                         // 绘制校准圆框（彩虹渐变效果）
                         // 外圈 - 半透明白色
@@ -248,31 +250,44 @@ fun BrightSpotDetectionApp() {
                         }
                     }
                 }
+                }
 
-                // 右侧控制面板（横屏适配）- 支持展开/折叠
-                val panelWidth by animateDpAsState(
-                    targetValue = if (isControlPanelExpanded) 320.dp else 0.dp,
-                    animationSpec = tween(durationMillis = 300),
-                    label = "panelWidth"
-                )
+                // 右侧控制面板（常显，支持上下滚动）
                 Surface(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .width(panelWidth)
+                        .width(320.dp)
                         .fillMaxHeight(),
                     color = Color(0xE6FFFFFF)
                 ) {
-                    if (isControlPanelExpanded) {
-                        Box(
-                            modifier = Modifier.fillMaxSize()
-                        ) {
+                    Box(
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                            IconButton(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(8.dp)
+                                    .zIndex(2f),
+                                colors = IconButtonDefaults.iconButtonColors(
+                                    containerColor = Color(0x50000000)
+                                ),
+                                shape = CircleShape,
+                                onClick = { showSettings = true }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Settings,
+                                    contentDescription = "设置",
+                                    tint = Color.White
+                                )
+                            }
+
                             val scrollState = rememberScrollState()
                             // 控制面板部分（可滚动）
                             Column(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .verticalScroll(scrollState)
-                                    .padding(12.dp),
+                                    .padding(start = 12.dp, end = 12.dp, bottom = 12.dp, top = 56.dp),
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 // 控制面板内容
@@ -1045,49 +1060,6 @@ fun BrightSpotDetectionApp() {
                                 }
                             }
                         }
-                    }
-                }
-
-                // 右上角展开/折叠按钮
-                val buttonEndPadding by animateDpAsState(
-                    targetValue = if (isControlPanelExpanded) 332.dp else 12.dp,
-                    animationSpec = tween(durationMillis = 300),
-                    label = "buttonEndPadding"
-                )
-
-                IconButton(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(end = buttonEndPadding, top = 12.dp),
-                    colors = IconButtonDefaults.iconButtonColors(
-                        containerColor = Color(0x50000000)
-                    ),
-                    shape = CircleShape,
-                    onClick = { isControlPanelExpanded = !isControlPanelExpanded }
-                ) {
-                    Icon(
-                        imageVector = if (isControlPanelExpanded) Icons.AutoMirrored.Filled.KeyboardArrowRight else Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                        contentDescription = if (isControlPanelExpanded) "折叠" else "展开",
-                        tint = Color.White
-                    )
-                }
-
-                // 左上角设置按钮
-                IconButton(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(12.dp),
-                    colors = IconButtonDefaults.iconButtonColors(
-                        containerColor = Color(0x50000000)
-                    ),
-                    shape = CircleShape,
-                    onClick = { showSettings = true }
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Settings,
-                        contentDescription = "设置",
-                        tint = Color.White
-                    )
                 }
 
                 // 设置页面（全屏覆盖，带过渡动画）

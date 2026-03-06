@@ -352,12 +352,12 @@ fun CameraPreview(
     }
     val roiAnimatedWidth by animateFloatAsState(
         targetValue = (roiTargetRectInImage?.right ?: 0f) - (roiTargetRectInImage?.left ?: 0f),
-        animationSpec = tween(durationMillis = 80),
+        animationSpec = tween(durationMillis = 120),
         label = "roiAnimatedWidth"
     )
     val roiAnimatedHeight by animateFloatAsState(
         targetValue = (roiTargetRectInImage?.bottom ?: 0f) - (roiTargetRectInImage?.top ?: 0f),
-        animationSpec = tween(durationMillis = 80),
+        animationSpec = tween(durationMillis =120),
         label = "roiAnimatedHeight"
     )
     val animatedRoiCenterX by animateFloatAsState(

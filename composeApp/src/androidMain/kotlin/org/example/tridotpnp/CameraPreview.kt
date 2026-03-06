@@ -16,18 +16,24 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
+import androidx.compose.material3.Text
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import android.os.Handler
@@ -45,6 +51,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
+import kotlinx.coroutines.flow.collectLatest
 
 @androidx.camera.camera2.interop.ExperimentalCamera2Interop
 @OptIn(ExperimentalCamera2Interop::class)
@@ -72,6 +79,7 @@ fun CameraPreview(
     var previewSize by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var camera by remember { mutableStateOf<Camera?>(null) }
     var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
+    var zoomRatioDisplay by remember { mutableFloatStateOf(1f) }
 
     // 跟踪上一个三色点的三个位置（用于ROI优化）
     var lastTriSpots by remember { mutableStateOf<Triple<Offset, Offset, Offset>?>(null) }
@@ -150,6 +158,19 @@ fun CameraPreview(
             // 再设置曝光补偿
             cameraControl.setExposureCompensationIndex(exposureCompensation)
             android.util.Log.d("Camera", "AE locked with exposure: $exposureCompensation")
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        VolumeKeyZoomController.zoomSteps.collectLatest { step ->
+            val cam = camera ?: return@collectLatest
+            val zoomState = cam.cameraInfo.zoomState.value ?: return@collectLatest
+            val currentZoom = zoomState.zoomRatio
+            val factor = 1.08f
+            val targetZoom = if (step > 0) currentZoom * factor else currentZoom / factor
+            val clampedZoom = targetZoom.coerceIn(zoomState.minZoomRatio, zoomState.maxZoomRatio)
+            cam.cameraControl.setZoomRatio(clampedZoom)
+            zoomRatioDisplay = clampedZoom
         }
     }
 
@@ -617,6 +638,7 @@ fun CameraPreview(
                         )
 
                         camera = cam
+                        zoomRatioDisplay = cam.cameraInfo.zoomState.value?.zoomRatio ?: 1f
                         val camera2Info = Camera2CameraInfo.from(cam.cameraInfo)
                         val ranges = camera2Info.getCameraCharacteristic(
                             CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES
@@ -1260,6 +1282,16 @@ fun CameraPreview(
                 }
             }
         }
+
+        Text(
+            text = "${"%.1f".format(zoomRatioDisplay)}x",
+            color = Color.White,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(14.dp)
+                .background(Color(0x77000000), RoundedCornerShape(10.dp))
+                .padding(horizontal = 10.dp, vertical = 6.dp)
+        )
     }
 }
 

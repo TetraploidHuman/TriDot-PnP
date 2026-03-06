@@ -7,6 +7,14 @@ import android.hardware.camera2.CaptureRequest
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -294,6 +302,99 @@ fun CameraPreview(
             buildPartitionTree(0f, 0f, w.toFloat(), h.toFloat(), 0, maxDepth, splitRatio, minLeafSizePx, targetPointForPartition)
         }
     }
+    var latestRoiInfoForAnimation by remember { mutableStateOf<RoiVisualizationInfo?>(null) }
+    LaunchedEffect(roiVisualizationInfo) {
+        if (roiVisualizationInfo != null) {
+            latestRoiInfoForAnimation = roiVisualizationInfo
+        }
+    }
+    val roiTargetRectInImage = remember(
+        roiVisualizationInfo,
+        rootRectCached,
+        previewSize,
+        brightSpots,
+        maxDepth,
+        splitRatio,
+        minLeafSizePx,
+        targetPointForPartition
+    ) {
+        val roiInfo = roiVisualizationInfo ?: return@remember null
+        val imageSize = previewSize ?: return@remember null
+        val (imageWidth, imageHeight) = imageSize
+        val currentTargetPoint = if (brightSpots.isNotEmpty()) {
+            val centerX = brightSpots.map { it.position.x }.average().toFloat()
+            val centerY = brightSpots.map { it.position.y }.average().toFloat()
+            Offset(centerX, centerY)
+        } else {
+            targetPointForPartition
+        }
+        val rootRect = rootRectCached ?: buildPartitionTree(
+            0f, 0f, imageWidth.toFloat(), imageHeight.toFloat(), 0,
+            maxDepth, splitRatio, minLeafSizePx, currentTargetPoint
+        )
+        val leafNodes = findLeafNodesInRoi(
+            root = rootRect,
+            roiLeft = roiInfo.left,
+            roiTop = roiInfo.top,
+            roiRight = roiInfo.right,
+            roiBottom = roiInfo.bottom
+        )
+        if (leafNodes.isEmpty()) {
+            null
+        } else {
+            Rect(
+                left = leafNodes.minOf { it.left },
+                top = leafNodes.minOf { it.top },
+                right = leafNodes.maxOf { it.right },
+                bottom = leafNodes.maxOf { it.bottom }
+            )
+        }
+    }
+    val roiAnimatedWidth by animateFloatAsState(
+        targetValue = (roiTargetRectInImage?.right ?: 0f) - (roiTargetRectInImage?.left ?: 0f),
+        animationSpec = tween(durationMillis = 80),
+        label = "roiAnimatedWidth"
+    )
+    val roiAnimatedHeight by animateFloatAsState(
+        targetValue = (roiTargetRectInImage?.bottom ?: 0f) - (roiTargetRectInImage?.top ?: 0f),
+        animationSpec = tween(durationMillis = 80),
+        label = "roiAnimatedHeight"
+    )
+    val animatedRoiCenterX by animateFloatAsState(
+        targetValue = ((roiTargetRectInImage?.left ?: 0f) + (roiTargetRectInImage?.right ?: 0f)) / 2f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessHigh
+        ),
+        label = "animatedRoiCenterX"
+    )
+    val animatedRoiCenterY by animateFloatAsState(
+        targetValue = ((roiTargetRectInImage?.top ?: 0f) + (roiTargetRectInImage?.bottom ?: 0f)) / 2f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessHigh
+        ),
+        label = "animatedRoiCenterY"
+    )
+    val animatedRoiLeft = animatedRoiCenterX - roiAnimatedWidth / 2f
+    val animatedRoiTop = animatedRoiCenterY - roiAnimatedHeight / 2f
+    val animatedRoiRight = animatedRoiCenterX + roiAnimatedWidth / 2f
+    val animatedRoiBottom = animatedRoiCenterY + roiAnimatedHeight / 2f
+    val roiVisibilityAlpha by animateFloatAsState(
+        targetValue = if (roiTargetRectInImage != null) 1f else 0f,
+        animationSpec = tween(durationMillis = 180),
+        label = "roiVisibilityAlpha"
+    )
+    val roiPulseTransition = rememberInfiniteTransition(label = "roiPulse")
+    val roiPulseAlpha by roiPulseTransition.animateFloat(
+        initialValue = 0.85f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 900),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "roiPulseAlpha"
+    )
 
     Box(modifier = modifier
         .pointerInput(Unit) {
@@ -1038,30 +1139,20 @@ fun CameraPreview(
                     )
                 }
 
-                // ---------- ROI可视化：绘制ROI区域的矩形框（使用空间分割树的最小单位） ----------
-                roiVisualizationInfo?.let { roiInfo ->
-                    // 查找ROI区域内的所有叶子节点（最小单位）
-                    val leafNodes = findLeafNodesInRoi(
-                        root = rootRect,
-                        roiLeft = roiInfo.left,
-                        roiTop = roiInfo.top,
-                        roiRight = roiInfo.right,
-                        roiBottom = roiInfo.bottom
-                    )
-
-                    // 计算ROI的外接矩形（所有叶子节点的边界）
-                    if (leafNodes.isNotEmpty()) {
-                        val roiMinLeft = leafNodes.minOf { it.left }
-                        val roiMinTop = leafNodes.minOf { it.top }
-                        val roiMaxRight = leafNodes.maxOf { it.right }
-                        val roiMaxBottom = leafNodes.maxOf { it.bottom }
-
+                // ---------- ROI可视化：绘制带尺寸过渡动画的ROI区域矩形框 ----------
+                val roiInfoForDraw = latestRoiInfoForAnimation
+                if (roiInfoForDraw != null && roiVisibilityAlpha > 0.01f) {
+                    val roiMinLeft = animatedRoiLeft
+                    val roiMinTop = animatedRoiTop
+                    val roiMaxRight = animatedRoiRight
+                    val roiMaxBottom = animatedRoiBottom
+                    if (roiMaxRight > roiMinLeft && roiMaxBottom > roiMinTop) {
                         // 根据是否找到目标设置颜色
-                        val roiColor = if (roiInfo.found) {
+                        val roiColor = if (roiInfoForDraw.found) {
                             Color(0xFF00FF00) // 找到目标：绿色
                         } else {
                             // 未找到：根据扩大次数变化颜色（从黄色到橙色到红色）
-                            val expansionRatio = (roiInfo.expansionCount.toFloat() / 10f).coerceIn(0f, 1f)
+                            val expansionRatio = (roiInfoForDraw.expansionCount.toFloat() / 10f).coerceIn(0f, 1f)
                             when {
                                 expansionRatio < 0.33f -> Color(0xFFFFFF00) // 黄色
                                 expansionRatio < 0.66f -> Color(0xFFFF6600) // 橙色
@@ -1070,10 +1161,10 @@ fun CameraPreview(
                         }
 
                         // 根据扩大次数设置透明度
-                        val roiAlpha = if (roiInfo.found) {
+                        val baseRoiAlpha = if (roiInfoForDraw.found) {
                             0.7f
                         } else {
-                            (0.3f + roiInfo.expansionCount * 0.05f).coerceAtMost(0.8f)
+                            (0.3f + roiInfoForDraw.expansionCount * 0.05f).coerceAtMost(0.8f)
                         }
 
                         // 变换ROI矩形坐标到画布坐标
@@ -1107,7 +1198,8 @@ fun CameraPreview(
                         val cornerLength = (kotlin.math.min(roiWidth, roiHeight) * 0.15f).coerceIn(15f, 40f)
 
                         val strokeWidth = 5f
-                        val roiColorWithAlpha = roiColor.copy(alpha = roiAlpha)
+                        val animatedRoiAlpha = (baseRoiAlpha * roiVisibilityAlpha * roiPulseAlpha).coerceIn(0f, 1f)
+                        val roiColorWithAlpha = roiColor.copy(alpha = animatedRoiAlpha)
 
                         // 绘制四个角的方框（每个角由两条线段组成L形）
                         // 左上角 ┌

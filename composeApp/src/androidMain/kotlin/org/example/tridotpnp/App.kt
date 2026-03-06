@@ -1,6 +1,11 @@
 ﻿package org.example.tridotpnp
 
 import android.Manifest
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -1085,12 +1090,24 @@ fun BrightSpotDetectionApp() {
                     )
                 }
 
-
-                // 设置页面（全屏覆盖）
-                if (showSettings) {
+                // 设置页面（全屏覆盖，带过渡动画）
+                AnimatedVisibility(
+                    visible = showSettings,
+                    enter = fadeIn(animationSpec = tween(durationMillis = 220)) +
+                            scaleIn(
+                                animationSpec = tween(durationMillis = 240),
+                                initialScale = 0.96f
+                            ),
+                    exit = fadeOut(animationSpec = tween(durationMillis = 180)) +
+                            scaleOut(
+                                animationSpec = tween(durationMillis = 180),
+                                targetScale = 0.98f
+                            ),
+                    modifier = Modifier.zIndex(20f)
+                ) {
                     SettingsScreen(
                         onDismiss = { showSettings = false },
-                        modifier = Modifier.zIndex(20f)
+                        modifier = Modifier.fillMaxSize()
                     )
                 }
             }

@@ -277,29 +277,6 @@ fun BrightSpotDetectionApp() {
                                 Column(
                                     verticalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
-                                    // 亮点数量
-                                    Text(
-                                        text = "TARGETS",
-                                        color = Color(0xFF9A9A9A),
-                                        style = MaterialTheme.typography.labelSmall
-                                    )
-                                    Surface(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(52.dp),
-                                        shape = MaterialTheme.shapes.small,
-                                        color = Color(0xFF0078D4),
-                                        shadowElevation = 0.dp
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Text(
-                                                text = "RGB / 3",
-                                                color = Color.White,
-                                                style = MaterialTheme.typography.titleMedium
-                                            )
-                                        }
-                                    }
-
                                     // 精度控制
                                     Text(
                                         text = "PRECISION",
@@ -361,7 +338,7 @@ fun BrightSpotDetectionApp() {
                                                 onClick = { if (exposureCompensation > -6) exposureCompensation-- }
                                             ) {
                                                 Text(
-                                                    "?",
+                                                    "-",
                                                     style = MaterialTheme.typography.headlineMedium,
                                                     color = Color(0xFFE6E6E6)
                                                 )

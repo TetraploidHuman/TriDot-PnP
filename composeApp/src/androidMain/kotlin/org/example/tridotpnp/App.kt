@@ -1,6 +1,8 @@
 ﻿package org.example.tridotpnp
 
 import android.Manifest
+import android.util.Log
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -115,7 +117,6 @@ fun BrightSpotDetectionApp() {
                     // 相机预览
                     CameraPreview(
                         modifier = Modifier.fillMaxSize(),
-                        maxSpots = targetSpotCount,
                         exposureCompensation = exposureCompensation,
                         gridSize = gridSize,
                         probabilityMatrix = probabilityMatrix,
@@ -433,14 +434,14 @@ fun BrightSpotDetectionApp() {
                                                         onClick = {
                                                             calibrationData = null
                                                             detector.setCalibration(null)
-                                                            android.util.Log.d(
+                                                           Log.d(
                                                                 "Calibration",
                                                                 "已清除校准数据"
                                                             )
-                                                            android.widget.Toast.makeText(
+                                                            Toast.makeText(
                                                                 context,
                                                                 "已清除校准",
-                                                                android.widget.Toast.LENGTH_SHORT
+                                                                Toast.LENGTH_SHORT
                                                             ).show()
                                                         },
                                                         modifier = Modifier.fillMaxSize(),
@@ -490,15 +491,15 @@ fun BrightSpotDetectionApp() {
                                                                         val calibrationRadius =
                                                                             (width * 0.25f).toInt()  // 圆框半径为图像宽度的25%
 
-                                                                        android.util.Log.d(
+                                                                        Log.d(
                                                                             "Calibration",
                                                                             "=== 开始自动校准 ==="
                                                                         )
-                                                                        android.util.Log.d(
+                                                                        Log.d(
                                                                             "Calibration",
                                                                             "图像尺寸: ${width}x${height}"
                                                                         )
-                                                                        android.util.Log.d(
+                                                                        Log.d(
                                                                             "Calibration",
                                                                             "搜索区域: 中心($centerX,$centerY), 半径=$calibrationRadius"
                                                                         )
@@ -534,25 +535,25 @@ fun BrightSpotDetectionApp() {
                                                                                 return "$name: RGB(${r.toInt()},${g.toInt()},${b.toInt()}) 占比:R${rPct}% G${gPct}% B${bPct}% 亮度:${total.toInt()}"
                                                                             }
 
-                                                                            android.util.Log.d(
+                                                                            Log.d(
                                                                                 "Calibration",
                                                                                 "=== 校准结果 ==="
                                                                             )
-                                                                            android.util.Log.d(
+                                                                            Log.d(
                                                                                 "Calibration",
                                                                                 analyzeColor(
                                                                                     "?? 红色LED",
                                                                                     redColor
                                                                                 )
                                                                             )
-                                                                            android.util.Log.d(
+                                                                            Log.d(
                                                                                 "Calibration",
                                                                                 analyzeColor(
                                                                                     "?? 绿色LED",
                                                                                     greenColor
                                                                                 )
                                                                             )
-                                                                            android.util.Log.d(
+                                                                            Log.d(
                                                                                 "Calibration",
                                                                                 analyzeColor(
                                                                                     "?? 蓝色LED",
@@ -570,7 +571,7 @@ fun BrightSpotDetectionApp() {
                                                                             detector.setCalibration(
                                                                                 calibrationData
                                                                             )
-                                                                            android.util.Log.d(
+                                                                            Log.d(
                                                                                 "Calibration",
                                                                                 "? 校准数据已保存，现在将使用这些颜色进行检测"
                                                                             )
@@ -587,12 +588,12 @@ fun BrightSpotDetectionApp() {
                                                                             ).show()
                                                                         } else {
                                                                             // 搜索失败
-                                                                            android.util.Log.e(
+                                                                            Log.e(
                                                                                 "Calibration",
                                                                                 "? 未在圆框内找到有效的RGB颜色"
                                                                             )
 
-                                                                            android.widget.Toast.makeText(
+                                                                            Toast.makeText(
                                                                                 context,
                                                                                 "校准失败！\n请确保RGB三色LED都在圆框内",
                                                                                 android.widget.Toast.LENGTH_LONG
@@ -650,7 +651,7 @@ fun BrightSpotDetectionApp() {
                                                 modifier = Modifier.size(40.dp)
                                             ) {
                                                 Text(
-                                                    "?",
+                                                    "-",
                                                     style = MaterialTheme.typography.headlineMedium,
                                                     color = Color(0xFFE6E6E6)
                                                 )

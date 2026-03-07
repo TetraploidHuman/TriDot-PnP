@@ -1,5 +1,6 @@
 package org.example.tridotpnp
 
+import android.annotation.SuppressLint
 import android.os.Bundle
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
@@ -18,18 +19,40 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.action == KeyEvent.ACTION_DOWN) {
-            when (event.keyCode) {
-                KeyEvent.KEYCODE_VOLUME_UP -> {
+        when (event.keyCode) {
+            KeyEvent.KEYCODE_VOLUME_UP -> {
+                if (event.action == KeyEvent.ACTION_DOWN) {
                     VolumeKeyZoomController.zoomIn()
-                    return true
                 }
+                return true
+            }
 
-                KeyEvent.KEYCODE_VOLUME_DOWN -> {
+            KeyEvent.KEYCODE_VOLUME_DOWN -> {
+                if (event.action == KeyEvent.ACTION_DOWN) {
                     VolumeKeyZoomController.zoomOut()
-                    return true
                 }
+                return true
+            }
+
+            // Xperia 二段快门键：半按（FOCUS）/全按（CAMERA）
+            KeyEvent.KEYCODE_FOCUS -> {
+                if (event.action == KeyEvent.ACTION_DOWN) {
+                    ShutterKeyController.emit(ShutterKeyEvent.HALF_PRESS_DOWN)
+                } else if (event.action == KeyEvent.ACTION_UP) {
+                    ShutterKeyController.emit(ShutterKeyEvent.HALF_PRESS_UP)
+                }
+                return true
+            }
+
+            KeyEvent.KEYCODE_CAMERA -> {
+                if (event.action == KeyEvent.ACTION_DOWN) {
+                    ShutterKeyController.emit(ShutterKeyEvent.FULL_PRESS_DOWN)
+                } else if (event.action == KeyEvent.ACTION_UP) {
+                    ShutterKeyController.emit(ShutterKeyEvent.FULL_PRESS_UP)
+                }
+                return true
             }
         }
         return super.dispatchKeyEvent(event)

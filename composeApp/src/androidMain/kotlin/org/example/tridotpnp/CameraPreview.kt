@@ -38,11 +38,14 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
+import android.widget.Toast
 import androidx.annotation.OptIn
 import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
+import androidx.camera.core.FocusMeteringAction
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -58,7 +61,6 @@ import kotlinx.coroutines.flow.collectLatest
 @Composable
 fun CameraPreview(
     modifier: Modifier = Modifier,
-    maxSpots: Int? = null,
     exposureCompensation: Int = 0,
     gridSize: Int = 50,
     probabilityMatrix: ProbabilityMatrix128x96? = null,
@@ -113,25 +115,12 @@ fun CameraPreview(
     val currentOnFpsUpdate = rememberUpdatedState(onFpsUpdate)
 
     // 使用rememberUpdatedState确保闭包中始终使用最新的值
-    val currentMaxSpots = rememberUpdatedState(maxSpots)
     val currentExposureCompensation = rememberUpdatedState(exposureCompensation)
     val currentGridSize = rememberUpdatedState(gridSize)
     val currentProbabilityMatrix = rememberUpdatedState(probabilityMatrix)
     val currentEnableRoiOptimization = rememberUpdatedState(enableRoiOptimization)
     val currentCaptureBitmapForCalibration = rememberUpdatedState(captureBitmapForCalibration)
     var skipFrames by remember { mutableIntStateOf(0) }
-    var lastModeIsRGB by remember { mutableStateOf(maxSpots == 3) }
-    // 模式切换时短暂丢帧，避免卡顿，并清除跟踪状态
-    LaunchedEffect(maxSpots) {
-        val nowIsRGB = maxSpots == 3
-        if (nowIsRGB != lastModeIsRGB) {
-            skipFrames = 3
-            lastModeIsRGB = nowIsRGB
-            // 清除跟踪状态，因为模式改变了
-            lastTriSpots = null
-            lastTriSpotsImageSize = null
-        }
-    }
 
     // ROI优化关闭时清除跟踪状态和可视化信息
     LaunchedEffect(enableRoiOptimization) {
@@ -171,6 +160,46 @@ fun CameraPreview(
             val clampedZoom = targetZoom.coerceIn(zoomState.minZoomRatio, zoomState.maxZoomRatio)
             cam.cameraControl.setZoomRatio(clampedZoom)
             zoomRatioDisplay = clampedZoom
+        }
+    }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(Unit) {
+        ShutterKeyController.events.collectLatest { event ->
+            when (event) {
+                ShutterKeyEvent.HALF_PRESS_DOWN -> {
+                    val cam = camera ?: return@collectLatest
+                    val pv = previewViewRef ?: return@collectLatest
+                    val point = pv.meteringPointFactory.createPoint(
+                        pv.width / 2f,
+                        pv.height / 2f
+                    )
+                    val action = FocusMeteringAction.Builder(point).build()
+                    cam.cameraControl.startFocusAndMetering(action)
+                    Log.d("ShutterKey", "HALF_PRESS_DOWN captured")
+                    Toast.makeText(
+                        context,
+                        "轻按",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+
+                ShutterKeyEvent.FULL_PRESS_DOWN -> {
+                    Log.d("ShutterKey", "FULL_PRESS_DOWN captured")
+                    Toast.makeText(
+                        context,
+                        "重按",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+
+                ShutterKeyEvent.HALF_PRESS_UP -> {
+                    Log.d("ShutterKey", "HALF_PRESS_UP captured")
+                }
+
+                ShutterKeyEvent.FULL_PRESS_UP -> {
+                    Log.d("ShutterKey", "FULL_PRESS_UP captured")
+                }
+            }
         }
     }
 
@@ -552,7 +581,6 @@ fun CameraPreview(
                                     processImage(
                                         imageProxy = imageProxy,
                                         detector = detector,
-                                        maxSpots = currentMaxSpots.value,
                                         gridSize = currentGridSize.value,
                                         probabilityMatrix = currentProbabilityMatrix.value,
                                         enableRoiOptimization = currentEnableRoiOptimization.value,
@@ -571,7 +599,7 @@ fun CameraPreview(
                                             previewSize = size
 
                                             // 如果在手动ROI中找到三色点，清除手动ROI并隐藏显示框
-                                            if (foundInManualRoi && spots.size == 3 && currentMaxSpots.value == 3) {
+                                            if (foundInManualRoi && spots.size == 3) {
                                                 mainHandler.post {
                                                     manualRoiStart = null
                                                     manualRoiEnd = null
@@ -581,7 +609,7 @@ fun CameraPreview(
 
                                             // 仅在启用ROI优化时更新跟踪的三色点位置
                                             if (currentEnableRoiOptimization.value) {
-                                                if (spots.size == 3 && currentMaxSpots.value == 3) {
+                                                if (spots.size == 3) {
                                                     var redSpot: BrightSpot? = null
                                                     var greenSpot: BrightSpot? = null
                                                     var blueSpot: BrightSpot? = null
@@ -1356,7 +1384,6 @@ private fun calculateCircumradius(
 private fun processImage(
     imageProxy: ImageProxy,
     detector: BrightSpotDetector,
-    maxSpots: Int? = null,
     gridSize: Int = 50,
     probabilityMatrix: ProbabilityMatrix128x96? = null,
     enableRoiOptimization: Boolean = true,
@@ -1370,6 +1397,7 @@ private fun processImage(
     onBitmapCaptured: (Bitmap) -> Unit = {}
 ) {
     try {
+        val targetSpotCount = 3
         val bitmap = imageProxy.toBitmap()
         val rotatedBitmap = rotateBitmap(bitmap, imageProxy.imageInfo.rotationDegrees.toFloat())
 
@@ -1402,7 +1430,7 @@ private fun processImage(
         }
 
         // 上一次三色点映射到当前图像
-        val initialRoiInfo = if (enableRoiOptimization && lastTriSpots != null && lastTriSpotsImageSize != null && maxSpots == 3) {
+        val initialRoiInfo = if (enableRoiOptimization && lastTriSpots != null && lastTriSpotsImageSize != null) {
             val (lastW, lastH) = lastTriSpotsImageSize
             val (currW, currH) = rotatedBitmap.width to rotatedBitmap.height
             val scaleX = currW.toFloat() / lastW
@@ -1454,20 +1482,17 @@ private fun processImage(
             val manualRoiSpots = detector.detectBrightSpots(
                 bitmap = workingBitmap,
                 threshold = 80f,
-                gridSize = gridSize,
-                maxSpots = maxSpots,
-                detectColoredLeds = (maxSpots == 3),
-                roiLeft = roiLeft,
+                gridSize = gridSize,                roiLeft = roiLeft,
                 roiTop = roiTop,
                 roiRight = roiRight,
                 roiBottom = roiBottom,
                 probabilityMatrix = probabilityMatrix
             )
 
-            val foundFlag = manualRoiSpots.size == 3 && maxSpots == 3
+            val foundFlag = manualRoiSpots.size == 3
             Pair(manualRoiSpots, foundFlag)
 
-        } else if (initialRoiInfo != null && maxSpots == 3) {
+        } else if (initialRoiInfo != null) {
             // ROI 扩展 + 三色点稳定性判断
             val (centerX, centerY, initialRoiRadius) = initialRoiInfo
             var currentRadius = initialRoiRadius
@@ -1505,10 +1530,7 @@ private fun processImage(
                 val roiSpots = detector.detectBrightSpots(
                     bitmap = workingBitmap,
                     threshold = 80f,
-                    gridSize = gridSize,
-                    maxSpots = maxSpots,
-                    detectColoredLeds = true,
-                    roiLeft = roiLeft,
+                    gridSize = gridSize,                    roiLeft = roiLeft,
                     roiTop = roiTop,
                     roiRight = roiRight,
                     roiBottom = roiBottom,
@@ -1568,10 +1590,7 @@ private fun processImage(
                     detector.detectBrightSpots(
                         bitmap = workingBitmap,
                         threshold = 80f,
-                        gridSize = gridSize,
-                        maxSpots = maxSpots,
-                        detectColoredLeds = true,
-                        roiLeft = it.left,
+                        gridSize = gridSize,                        roiLeft = it.left,
                         roiTop = it.top,
                         roiRight = it.right,
                         roiBottom = it.bottom,
@@ -1580,10 +1599,7 @@ private fun processImage(
                 } ?: detector.detectBrightSpots(
                     bitmap = workingBitmap,
                     threshold = 80f,
-                    gridSize = gridSize,
-                    maxSpots = maxSpots,
-                    detectColoredLeds = true,
-                    probabilityMatrix = probabilityMatrix
+                    gridSize = gridSize,                    probabilityMatrix = probabilityMatrix
                 )
                 Pair(searchResult, false)
             } else {
@@ -1598,10 +1614,7 @@ private fun processImage(
                 detector.detectBrightSpots(
                     bitmap = workingBitmap,
                     threshold = 80f,
-                    gridSize = gridSize,
-                    maxSpots = maxSpots,
-                    detectColoredLeds = (maxSpots == 3),
-                    roiLeft = it.left,
+                    gridSize = gridSize,                    roiLeft = it.left,
                     roiTop = it.top,
                     roiRight = it.right,
                     roiBottom = it.bottom,
@@ -1610,10 +1623,7 @@ private fun processImage(
             } ?: detector.detectBrightSpots(
                 bitmap = workingBitmap,
                 threshold = 80f,
-                gridSize = gridSize,
-                maxSpots = maxSpots,
-                detectColoredLeds = (maxSpots == 3),
-                probabilityMatrix = probabilityMatrix
+                gridSize = gridSize,                probabilityMatrix = probabilityMatrix
             )
             Pair(searchResult, false)
         }
@@ -1752,4 +1762,5 @@ private fun rotateBitmap(bitmap: Bitmap, degrees: Float): Bitmap {
         true
     )
 }
+
 

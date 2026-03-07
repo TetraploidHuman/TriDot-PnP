@@ -181,8 +181,6 @@ class BrightSpotDetector {
         bitmap: Bitmap,
         threshold: Float = 80f,
         gridSize: Int = 20,
-        maxSpots: Int? = null,
-        detectColoredLeds: Boolean = false,
         roiLeft: Int? = null,
         roiTop: Int? = null,
         roiRight: Int? = null,
@@ -248,24 +246,6 @@ class BrightSpotDetector {
             val probWeight: Float = 1f
         )
 
-        fun pushTopK(list: MutableList<Candidate>, cand: Candidate, k: Int) {
-            if (k <= 0) return
-            if (list.size < k) {
-                list.add(cand)
-                return
-            }
-            var minIdx = 0
-            var minVal = list[0].score
-            for (i in 1 until list.size) {
-                val v = list[i].score
-                if (v < minVal) {
-                    minVal = v
-                    minIdx = i
-                }
-            }
-            if (cand.score > minVal) list[minIdx] = cand
-        }
-
         fun calcRefineRadius(): Int {
             val baseRadius = max(stepX, stepY)
             return (baseRadius * 1.5f).toInt()
@@ -273,10 +253,7 @@ class BrightSpotDetector {
                 .coerceAtMost(min(searchWidth, searchHeight) / 4)
         }
 
-        // -----------------------------
-        // A) 三色 + maxSpots==3：Top-N 候选 + 三点几何软惩罚 + “纯度加分” 只 refine 3 次
-        // -----------------------------
-        if (detectColoredLeds && maxSpots == 3) {
+        // 三色模式：Top-N 候选 + 三点几何软惩罚 + “纯度加分” 只 refine 3 次
 
             val topN = 16
             val base = max(stepX, stepY).toFloat()
@@ -480,137 +457,6 @@ class BrightSpotDetector {
             addRefined(bestTripleG, LedColor.GREEN)
             addRefined(bestTripleB, LedColor.BLUE)
             return result
-        }
-
-        // -----------------------------
-        // B) 其它情况：先粗扫候选（阈值 or Top-K），再只对候选 refine
-        // -----------------------------
-        val candidates = mutableListOf<Candidate>()
-
-        val k = when {
-            maxSpots == null -> 0
-            maxSpots <= 0 -> 0
-            maxSpots <= 3 -> 48
-            else -> (maxSpots * 8).coerceAtMost(256)
-        }
-
-        for (i in startI..endI) {
-            val cx = (i * stepX + stepX / 2).coerceIn(0, width - 1)
-            for (j in startJ..endJ) {
-                val cy = (j * stepY + stepY / 2).coerceIn(0, height - 1)
-                val lx = cx - searchLeft
-                val ly = cy - searchTop
-                if (lx !in 0 until searchWidth || ly !in 0 until searchHeight) continue
-                val pwRaw = probWeightAt(cx, cy)
-                val pw = candidateProbWeight(pwRaw)
-
-                if (detectColoredLeds) {
-                    val intensities = calculateHSVIntensitiesFast(
-                        pixels = pixels,
-                        bmpWidth = searchWidth,
-                        bmpHeight = searchHeight,
-                        centerX = lx,
-                        centerY = ly,
-                        radiusX = stepX / 2,
-                        radiusY = stepY / 2
-                    ) ?: continue
-
-                    val rI = intensities.first
-                    val gI = intensities.second
-                    val bI = intensities.third
-                    val score = maxOf(rI, gI, bI) * pw
-
-                    if (maxSpots == null) {
-                        if (score > threshold) {
-                            candidates.add(Candidate(cx, cy, lx, ly, score, rI, gI, bI, probWeight = pwRaw))
-                        }
-                    } else {
-                        pushTopK(candidates, Candidate(cx, cy, lx, ly, score, rI, gI, bI, probWeight = pwRaw), k)
-                    }
-                } else {
-                    // 绿色模式仍保留你原来的“绿相对强度”逻辑
-                    val greenIntensity = calculateRegionGreenIntensityFast(
-                        pixels = pixels,
-                        bmpWidth = searchWidth,
-                        bmpHeight = searchHeight,
-                        centerX = lx,
-                        centerY = ly,
-                        radiusX = stepX / 2,
-                        radiusY = stepY / 2
-                    )
-
-                    val weightedGreen = greenIntensity * pw
-
-                    if (maxSpots == null) {
-                        if (weightedGreen > threshold) {
-                            candidates.add(Candidate(cx, cy, lx, ly, weightedGreen, probWeight = pwRaw))
-                        }
-                    } else {
-                        pushTopK(candidates, Candidate(cx, cy, lx, ly, weightedGreen, probWeight = pwRaw), k)
-                    }
-                }
-            }
-        }
-
-        if (candidates.isEmpty()) return emptyList()
-
-        val refineRadius = calcRefineRadius()
-        val refinedSpots = ArrayList<BrightSpot>(candidates.size)
-
-        for (c in candidates) {
-            if (detectColoredLeds) {
-                val prefer = when {
-                    c.r >= c.g && c.r >= c.b -> LedColor.RED
-                    c.g >= c.r && c.g >= c.b -> LedColor.GREEN
-                    else -> LedColor.BLUE
-                }
-                val refined = refineSpotCenterIterativeFastHSV(
-                    pixels = pixels,
-                    bmpWidth = searchWidth,
-                    bmpHeight = searchHeight,
-                    centerX = c.localX,
-                    centerY = c.localY,
-                    radius = refineRadius,
-                    preferChannel = prefer
-                )
-                refinedSpots.add(
-                    BrightSpot(
-                        position = Offset(refined.x + searchLeft, refined.y + searchTop),
-                        brightness = c.score,
-                        color = LedColor.UNKNOWN,
-                        redIntensity = c.r,
-                        greenIntensity = c.g,
-                        blueIntensity = c.b
-                    )
-                )
-            } else {
-                val refined = refineSpotCenterIterativeFastRGB(
-                    pixels = pixels,
-                    bmpWidth = searchWidth,
-                    bmpHeight = searchHeight,
-                    centerX = c.localX,
-                    centerY = c.localY,
-                    radius = refineRadius,
-                    preferChannel = LedColor.GREEN
-                )
-                refinedSpots.add(
-                    BrightSpot(
-                        position = Offset(refined.x + searchLeft, refined.y + searchTop),
-                        brightness = c.score,
-                        color = LedColor.GREEN
-                    )
-                )
-            }
-        }
-
-        if (!detectColoredLeds && maxSpots != null && maxSpots in 1..3) {
-            return refinedSpots.sortedByDescending { it.brightness }.take(maxSpots)
-        }
-
-        val minDistance = (stepX.coerceAtLeast(stepY) * 1.5f)
-        val merged = mergeNearbySpots(refinedSpots, minDistance)
-        val sorted = merged.sortedByDescending { it.brightness }
-        return if (maxSpots != null && maxSpots > 0) sorted.take(maxSpots) else sorted
     }
 
     // ===== HSV 版区域强度：返回 (目标1, 目标2, 目标3) 强度 =====
@@ -708,7 +554,7 @@ class BrightSpotDetector {
         return Triple(simR * weightedBrightness, simG * weightedBrightness, simB * weightedBrightness)
     }
 
-    // ===== 绿色模式保留（你的原逻辑）=====
+    // ===== 亮度/颜色计算辅助 =====
     private fun calculateRegionGreenIntensityFast(
         pixels: IntArray,
         bmpWidth: Int,
@@ -812,7 +658,7 @@ class BrightSpotDetector {
         return refineSpotCenterFastHSV(pixels, bmpWidth, bmpHeight, cx, cy, radius, preferChannel)
     }
 
-    // ===== refine：RGB 版（仅给绿色模式沿用）=====
+    // ===== refine：RGB 版（兼容辅助）=====
     private fun refineSpotCenterFastRGB(
         pixels: IntArray,
         bmpWidth: Int,

@@ -32,8 +32,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -176,11 +178,13 @@ fun CameraPreview(
         }
     }
     val context = androidx.compose.ui.platform.LocalContext.current
+    val haptic = LocalHapticFeedback.current
     LaunchedEffect(Unit) {
         ShutterKeyController.events.collectLatest { event ->
             when (event) {
                 ShutterKeyEvent.HALF_PRESS_DOWN -> {
                     if (halfPressActive) return@collectLatest
+                    haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
                     halfPressActive = true
                     val cam = camera ?: return@collectLatest
                     val pv = previewViewRef ?: return@collectLatest
@@ -243,6 +247,7 @@ fun CameraPreview(
                 }
 
                 ShutterKeyEvent.FULL_PRESS_DOWN -> {
+                    haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
                     forceGlobalSearchRequested.set(true)
                     roiVisualizationInfo = null
                     Log.d("ShutterKey", "FULL_PRESS_DOWN captured")
@@ -509,6 +514,7 @@ fun CameraPreview(
             detectDragGesturesAfterLongPress(
                 onDragStart = { offset ->
                     mainHandler.post {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         isLongPressing = true
                         isDraggingLimitRegion = true
                         limitRegionStart = offset

@@ -49,6 +49,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -81,6 +83,7 @@ fun BrightSpotDetectionApp() {
     var fps by remember { mutableFloatStateOf(0f) } // 识别帧率
     var enableRoiOptimization by remember { mutableStateOf(true) } // ROI优化开关，默认启用
     var showSettings by remember { mutableStateOf(false) } // 设置页面显示状态
+    var lastGridSizeHapticStep by remember { mutableIntStateOf(gridSize) }
 
     // 颜色校准相关
     var isCalibrating by remember { mutableStateOf(false) }
@@ -88,6 +91,7 @@ fun BrightSpotDetectionApp() {
     var calibrationBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
 
     val context = androidx.compose.ui.platform.LocalContext.current
+    val haptic = LocalHapticFeedback.current
     val pnpCalculator = remember { PnPDistanceCalculator() }
     val detector = remember {
         BrightSpotDetector().apply {
@@ -256,7 +260,10 @@ fun BrightSpotDetectionApp() {
                                     containerColor = Color(0xFF1A1A1A)
                                 ),
                                 shape = CircleShape,
-                                onClick = { showSettings = true }
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                                    showSettings = true
+                                }
                             ) {
                                 Icon(
                                     imageVector = Icons.Filled.Settings,
@@ -308,7 +315,15 @@ fun BrightSpotDetectionApp() {
                                             value = gridSize.toFloat(),
                                             onValueChange = { value ->
                                                 val rounded = kotlin.math.round(value / 8f).toInt() * 8
-                                                gridSize = rounded.coerceIn(32, 512)
+                                                val newGridSize = rounded.coerceIn(32, 512)
+                                                if (newGridSize != lastGridSizeHapticStep) {
+                                                    haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                                                    lastGridSizeHapticStep = newGridSize
+                                                }
+                                                gridSize = newGridSize
+                                            },
+                                            onValueChangeFinished = {
+                                                haptic.performHapticFeedback(HapticFeedbackType.GestureEnd)
                                             },
                                             valueRange = 32f..512f,
                                             steps = ((512 - 32) / 8 - 1),
@@ -336,7 +351,10 @@ fun BrightSpotDetectionApp() {
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             IconButton(
-                                                onClick = { if (exposureCompensation > -6) exposureCompensation-- }
+                                                onClick = {
+                                                    haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                                                    if (exposureCompensation > -6) exposureCompensation--
+                                                }
                                             ) {
                                                 Text(
                                                     "-",
@@ -353,7 +371,10 @@ fun BrightSpotDetectionApp() {
                                                 style = MaterialTheme.typography.headlineLarge
                                             )
                                             IconButton(
-                                                onClick = { if (exposureCompensation < 6) exposureCompensation++ }
+                                                onClick = {
+                                                    haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                                                    if (exposureCompensation < 6) exposureCompensation++
+                                                }
                                             ) {
                                                 Text(
                                                     "+",
@@ -388,6 +409,7 @@ fun BrightSpotDetectionApp() {
                                             ) {
                                                 TextButton(
                                                     onClick = {
+                                                        haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
                                                         enableRoiOptimization = !enableRoiOptimization
                                                     },
                                                     modifier = Modifier.fillMaxSize(),
@@ -432,6 +454,7 @@ fun BrightSpotDetectionApp() {
                                                 ) {
                                                     TextButton(
                                                         onClick = {
+                                                            haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
                                                             calibrationData = null
                                                             detector.setCalibration(null)
                                                            Log.d(
@@ -469,6 +492,7 @@ fun BrightSpotDetectionApp() {
                                             ) {
                                                 TextButton(
                                                     onClick = {
+                                                        haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
                                                         if (isCalibrating) {
                                                             // 执行校准
                                                             try {
@@ -647,7 +671,10 @@ fun BrightSpotDetectionApp() {
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             IconButton(
-                                                onClick = { if (knownDistance > 10) knownDistance -= 10 },
+                                                onClick = {
+                                                    haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                                                    if (knownDistance > 10) knownDistance -= 10
+                                                },
                                                 modifier = Modifier.size(40.dp)
                                             ) {
                                                 Text(
@@ -672,7 +699,10 @@ fun BrightSpotDetectionApp() {
                                                 )
                                             }
                                             IconButton(
-                                                onClick = { knownDistance += 10 },
+                                                onClick = {
+                                                    haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                                                    knownDistance += 10
+                                                },
                                                 modifier = Modifier.size(40.dp)
                                             ) {
                                                 Text(
@@ -981,6 +1011,7 @@ fun SettingsScreen(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val haptic = LocalHapticFeedback.current
     Surface(
         modifier = modifier.fillMaxSize(),
         color = Color(0xFF1E1E1E)
@@ -1001,7 +1032,12 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.headlineLarge,
                     color = Color.White
                 )
-                IconButton(onClick = onDismiss) {
+                IconButton(
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                        onDismiss()
+                    }
+                ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "返回",
@@ -1035,6 +1071,7 @@ fun SettingsScreen(
 
 @Composable
 fun PermissionRequestContent(onRequestPermission: () -> Unit) {
+    val haptic = LocalHapticFeedback.current
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1057,7 +1094,10 @@ fun PermissionRequestContent(onRequestPermission: () -> Unit) {
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(bottom = 32.dp)
         )
-        Button(onClick = onRequestPermission) {
+        Button(onClick = {
+            haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+            onRequestPermission()
+        }) {
             Text("授予相机权限")
         }
     }
@@ -1065,6 +1105,7 @@ fun PermissionRequestContent(onRequestPermission: () -> Unit) {
 
 @Composable
 fun PermissionRationaleContent(onRequestPermission: () -> Unit) {
+    val haptic = LocalHapticFeedback.current
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1088,7 +1129,10 @@ fun PermissionRationaleContent(onRequestPermission: () -> Unit) {
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(bottom = 32.dp)
         )
-        Button(onClick = onRequestPermission) {
+        Button(onClick = {
+            haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+            onRequestPermission()
+        }) {
             Text("授予权限")
         }
     }

@@ -10,6 +10,7 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -28,17 +29,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DividerDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -65,13 +68,22 @@ import com.google.accompanist.permissions.shouldShowRationale
 @Composable
 @Preview
 fun App() {
-    MaterialTheme { BrightSpotDetectionApp() }
+    var themeMode by remember { mutableStateOf(ThemeMode.Light) }
+    TriDotFlatTheme(themeMode = themeMode) {
+        BrightSpotDetectionApp(
+            themeMode = themeMode,
+            onThemeModeChange = { themeMode = it }
+        )
+    }
 }
 
 @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
-fun BrightSpotDetectionApp() {
+fun BrightSpotDetectionApp(
+    themeMode: ThemeMode,
+    onThemeModeChange: (ThemeMode) -> Unit
+) {
     val cameraPermissionState = rememberPermissionState(Manifest.permission.CAMERA)
     var detectedSpotsCount by remember { mutableIntStateOf(0) }
     var detectedSpots by remember { mutableStateOf<List<BrightSpot>>(emptyList()) }
@@ -247,31 +259,30 @@ fun BrightSpotDetectionApp() {
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxHeight(),
-                            color = Color(0xFF121212)
+                            color = FlatUiColors.SidebarBackground
                         ) {
                             Box(
-                                modifier = Modifier.fillMaxSize()
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(FlatUiColors.SidebarBackground)
+                                    .padding(12.dp)
                             ) {
-                            IconButton(
+                            FlatIconActionButton(
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
-                                    .padding(8.dp)
                                     .zIndex(2f),
-                                colors = IconButtonDefaults.iconButtonColors(
-                                    containerColor = Color(0xFF1A1A1A)
-                                ),
-                                shape = CircleShape,
+                                icon = {
+                                    Icon(
+                                        imageVector = Icons.Filled.Settings,
+                                        contentDescription = "设置",
+                                        tint = FlatUiColors.TextPrimary
+                                    )
+                                },
                                 onClick = {
                                     haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
                                     showSettings = true
                                 }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Settings,
-                                    contentDescription = "设置",
-                                    tint = Color.White
-                                )
-                            }
+                            )
 
                             val scrollState = rememberScrollState()
                             // 控制面板部分（可滚动）
@@ -279,7 +290,7 @@ fun BrightSpotDetectionApp() {
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .verticalScroll(scrollState)
-                                    .padding(start = 12.dp, end = 12.dp, bottom = 12.dp, top = 56.dp),
+                                    .padding(top = 52.dp),
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 // 控制面板内容
@@ -289,7 +300,7 @@ fun BrightSpotDetectionApp() {
                                     // 精度控制
                                     Text(
                                         text = "PRECISION",
-                                        color = Color(0xFF9A9A9A),
+                                        color = FlatUiColors.TextMuted,
                                         style = MaterialTheme.typography.labelSmall,
                                         modifier = Modifier.padding(top = 4.dp)
                                     )
@@ -303,12 +314,12 @@ fun BrightSpotDetectionApp() {
                                         ) {
                                             Text(
                                                 text = "${gridSize}×${gridSize}",
-                                                color = Color(0xFF0078D4),
+                                                color = FlatUiColors.Accent,
                                                 style = MaterialTheme.typography.titleMedium
                                             )
                                             Text(
                                                 text = "${gridSize * gridSize}",
-                                                color = Color(0xFF9A9A9A),
+                                                color = FlatUiColors.TextMuted,
                                                 style = MaterialTheme.typography.bodySmall
                                             )
                                         }
@@ -335,7 +346,7 @@ fun BrightSpotDetectionApp() {
                                     // 曝光控制（横向）
                                     Text(
                                         text = "EXPOSURE",
-                                        color = Color(0xFF9A9A9A),
+                                        color = FlatUiColors.TextMuted,
                                         style = MaterialTheme.typography.labelSmall,
                                         modifier = Modifier.padding(top = 4.dp)
                                     )
@@ -344,7 +355,7 @@ fun BrightSpotDetectionApp() {
                                             .fillMaxWidth()
                                             .height(80.dp),
                                         shape = MaterialTheme.shapes.small,
-                                        color = Color(0xFF1F1F1F)
+                                        color = FlatUiColors.Panel
                                     ) {
                                         Row(
                                             modifier = Modifier.fillMaxSize(),
@@ -360,7 +371,7 @@ fun BrightSpotDetectionApp() {
                                                 Text(
                                                     "-",
                                                     style = MaterialTheme.typography.headlineMedium,
-                                                    color = Color(0xFFE6E6E6)
+                                                    color = FlatUiColors.TextPrimary
                                                 )
                                             }
                                             Text(
@@ -368,7 +379,7 @@ fun BrightSpotDetectionApp() {
                                                     exposureCompensation > 0 -> "+$exposureCompensation"
                                                     else -> "$exposureCompensation"
                                                 },
-                                                color = Color(0xFF0078D4),
+                                                color = FlatUiColors.Accent,
                                                 style = MaterialTheme.typography.headlineLarge
                                             )
                                             IconButton(
@@ -380,7 +391,7 @@ fun BrightSpotDetectionApp() {
                                                 Text(
                                                     "+",
                                                     style = MaterialTheme.typography.headlineMedium,
-                                                    color = Color(0xFFE6E6E6)
+                                                    color = FlatUiColors.TextPrimary
                                                 )
                                             }
                                         }
@@ -395,7 +406,7 @@ fun BrightSpotDetectionApp() {
                                         ) {
                                             Text(
                                                 text = "ROI OPTIMIZATION",
-                                                color = Color(0xFF9A9A9A),
+                                                color = FlatUiColors.TextMuted,
                                                 style = MaterialTheme.typography.labelSmall
                                             )
                                             Surface(
@@ -403,7 +414,7 @@ fun BrightSpotDetectionApp() {
                                                     .height(36.dp)
                                                     .width(64.dp),
                                                 shape = MaterialTheme.shapes.small,
-                                                color = if (enableRoiOptimization) Color(0xFF4CAF50) else Color(
+                                                color = if (enableRoiOptimization) Color(0xFF2CA36B) else Color(
                                                     0xFFCCCCCC
                                                 ),
                                                 shadowElevation = 0.dp
@@ -431,11 +442,11 @@ fun BrightSpotDetectionApp() {
                                         HorizontalDivider(
                                             modifier = Modifier.padding(vertical = 4.dp),
                                             thickness = DividerDefaults.Thickness,
-                                            color = Color(0xFF2D2D2D)
+                                            color = FlatUiColors.Border
                                         )
                                         Text(
                                             text = "CALIBRATION",
-                                            color = Color(0xFF9A9A9A),
+                                            color = FlatUiColors.TextMuted,
                                             style = MaterialTheme.typography.labelSmall
                                         )
                                         Row(
@@ -450,7 +461,7 @@ fun BrightSpotDetectionApp() {
                                                         .weight(1f)
                                                         .height(40.dp),
                                                     shape = MaterialTheme.shapes.small,
-                                                    color = Color(0xFFFF6666),
+                                                    color = Color(0xFFE35D5B),
                                                     shadowElevation = 0.dp
                                                 ) {
                                                     TextButton(
@@ -486,7 +497,7 @@ fun BrightSpotDetectionApp() {
                                                     .weight(1f)
                                                     .height(40.dp),
                                                 shape = MaterialTheme.shapes.small,
-                                                color = if (isCalibrating) Color(0xFFFFAA00) else Color(
+                                                color = if (isCalibrating) Color(0xFFF0A229) else Color(
                                                     0xFF0078D4
                                                 ),
                                                 shadowElevation = 0.dp
@@ -659,11 +670,11 @@ fun BrightSpotDetectionApp() {
                                         HorizontalDivider(
                                             modifier = Modifier.padding(vertical = 4.dp),
                                             thickness = DividerDefaults.Thickness,
-                                            color = Color(0xFF2D2D2D)
+                                            color = FlatUiColors.Border
                                         )
                                         Text(
                                             text = "△ EDGE LENGTH",
-                                            color = Color(0xFF9A9A9A),
+                                            color = FlatUiColors.TextMuted,
                                             style = MaterialTheme.typography.labelSmall
                                         )
                                         Row(
@@ -681,7 +692,7 @@ fun BrightSpotDetectionApp() {
                                                 Text(
                                                     "-",
                                                     style = MaterialTheme.typography.headlineMedium,
-                                                    color = Color(0xFFE6E6E6)
+                                                    color = FlatUiColors.TextPrimary
                                                 )
                                             }
                                             Column(
@@ -690,12 +701,12 @@ fun BrightSpotDetectionApp() {
                                             ) {
                                                 Text(
                                                     text = "%.0f".format(knownDistance),
-                                                    color = Color(0xFF0078D4),
+                                                    color = FlatUiColors.Accent,
                                                     style = MaterialTheme.typography.headlineMedium
                                                 )
                                                 Text(
                                                     text = "mm",
-                                                    color = Color(0xFF999999),
+                                                    color = FlatUiColors.TextMuted,
                                                     style = MaterialTheme.typography.labelSmall
                                                 )
                                             }
@@ -709,7 +720,7 @@ fun BrightSpotDetectionApp() {
                                                 Text(
                                                     "+",
                                                     style = MaterialTheme.typography.headlineMedium,
-                                                    color = Color(0xFFE6E6E6)
+                                                    color = FlatUiColors.TextPrimary
                                                 )
                                             }
                                         }
@@ -717,7 +728,7 @@ fun BrightSpotDetectionApp() {
 
                                     HorizontalDivider(
                                         modifier = Modifier.padding(vertical = 8.dp),
-                                        thickness = DividerDefaults.Thickness, color = Color(0xFF2D2D2D)
+                                        thickness = DividerDefaults.Thickness, color = FlatUiColors.Border
                                     )
 
                                     // 状态信息部分
@@ -727,7 +738,7 @@ fun BrightSpotDetectionApp() {
                                         // 状态信息标题
                                         Text(
                                             text = "STATUS",
-                                            color = Color(0xFF9A9A9A),
+                                            color = FlatUiColors.TextMuted,
                                             style = MaterialTheme.typography.labelSmall
                                         )
 
@@ -739,7 +750,7 @@ fun BrightSpotDetectionApp() {
                                             Surface(
                                                 modifier = Modifier.size(12.dp),
                                                 shape = MaterialTheme.shapes.small,
-                                                color = if (detectedSpotsCount > 0) Color(0xFF4CAF50) else Color(
+                                                color = if (detectedSpotsCount > 0) Color(0xFF2CA36B) else Color(
                                                     0xFFCCCCCC
                                                 ),
                                                 shadowElevation = 0.dp
@@ -747,14 +758,14 @@ fun BrightSpotDetectionApp() {
                                             Column(modifier = Modifier.weight(1f)) {
                                                 Text(
                                                     text = "DETECTED",
-                                                    color = Color(0xFF999999),
+                                                    color = FlatUiColors.TextMuted,
                                                     style = MaterialTheme.typography.labelSmall
                                                 )
                                                 Text(
                                                     text = "$detectedSpotsCount / $targetSpotCount",
                                                     color = if (detectedSpotsCount == targetSpotCount) Color(
                                                         0xFF4CAF50
-                                                    ) else Color(0xFFFF9800),
+                                                    ) else Color(0xFFF0A229),
                                                     style = MaterialTheme.typography.titleLarge
                                                 )
                                             }
@@ -768,12 +779,12 @@ fun BrightSpotDetectionApp() {
                                             Column {
                                                 Text(
                                                     text = "GRID",
-                                                    color = Color(0xFF999999),
+                                                    color = FlatUiColors.TextMuted,
                                                     style = MaterialTheme.typography.labelSmall
                                                 )
                                                 Text(
                                                     text = "${gridSize}×${gridSize}",
-                                                    color = Color(0xFFE6E6E6),
+                                                    color = FlatUiColors.TextPrimary,
                                                     style = MaterialTheme.typography.titleMedium
                                                 )
                                             }
@@ -781,12 +792,12 @@ fun BrightSpotDetectionApp() {
                                             Column(horizontalAlignment = Alignment.End) {
                                                 Text(
                                                     text = "BLOCKS",
-                                                    color = Color(0xFF999999),
+                                                    color = FlatUiColors.TextMuted,
                                                     style = MaterialTheme.typography.labelSmall
                                                 )
                                                 Text(
                                                     text = "${gridSize * gridSize}",
-                                                    color = Color(0xFFE6E6E6),
+                                                    color = FlatUiColors.TextPrimary,
                                                     style = MaterialTheme.typography.titleMedium
                                                 )
                                             }
@@ -796,14 +807,14 @@ fun BrightSpotDetectionApp() {
                                         Column {
                                             Text(
                                                 text = "FPS",
-                                                color = Color(0xFF999999),
+                                                color = FlatUiColors.TextMuted,
                                                 style = MaterialTheme.typography.labelSmall
                                             )
                                             Text(
                                                 text = "%.1f".format(fps),
-                                                color = if (fps > 20f) Color(0xFF4CAF50) else if (fps > 10f) Color(
+                                                color = if (fps > 20f) Color(0xFF2CA36B) else if (fps > 10f) Color(
                                                     0xFFFF9800
-                                                ) else Color(0xFFE74C3C),
+                                                ) else Color(0xFFE35D5B),
                                                 style = MaterialTheme.typography.titleLarge
                                             )
                                         }
@@ -813,7 +824,7 @@ fun BrightSpotDetectionApp() {
                                             HorizontalDivider(
                                                 modifier = Modifier.padding(vertical = 12.dp),
                                                 thickness = DividerDefaults.Thickness,
-                                                color = Color(0xFF2D2D2D)
+                                                color = FlatUiColors.Border
                                             )
 
                                             // 距离、方位角、仰角（横向排列）
@@ -824,12 +835,12 @@ fun BrightSpotDetectionApp() {
                                                 Column {
                                                     Text(
                                                         text = "DISTANCE",
-                                                        color = Color(0xFF999999),
+                                                        color = FlatUiColors.TextMuted,
                                                         style = MaterialTheme.typography.labelSmall
                                                     )
                                                     Text(
                                                         text = pnpCalculator.formatDistance(pnpResult!!.distance),
-                                                        color = Color(0xFF0078D4),
+                                                        color = FlatUiColors.Accent,
                                                         style = MaterialTheme.typography.titleMedium
                                                     )
                                                 }
@@ -837,12 +848,12 @@ fun BrightSpotDetectionApp() {
                                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                                     Text(
                                                         text = "AZIMUTH",
-                                                        color = Color(0xFF999999),
+                                                        color = FlatUiColors.TextMuted,
                                                         style = MaterialTheme.typography.labelSmall
                                                     )
                                                     Text(
                                                         text = pnpCalculator.formatAngle(pnpResult!!.azimuth),
-                                                        color = Color(0xFFE6E6E6),
+                                                        color = FlatUiColors.TextPrimary,
                                                         style = MaterialTheme.typography.titleMedium
                                                     )
                                                 }
@@ -850,12 +861,12 @@ fun BrightSpotDetectionApp() {
                                                 Column(horizontalAlignment = Alignment.End) {
                                                     Text(
                                                         text = "ELEVATION",
-                                                        color = Color(0xFF999999),
+                                                        color = FlatUiColors.TextMuted,
                                                         style = MaterialTheme.typography.labelSmall
                                                     )
                                                     Text(
                                                         text = pnpCalculator.formatAngle(pnpResult!!.elevation),
-                                                        color = Color(0xFFE6E6E6),
+                                                        color = FlatUiColors.TextPrimary,
                                                         style = MaterialTheme.typography.titleMedium
                                                     )
                                                 }
@@ -864,7 +875,7 @@ fun BrightSpotDetectionApp() {
                                             HorizontalDivider(
                                                 modifier = Modifier.padding(vertical = 8.dp),
                                                 thickness = DividerDefaults.Thickness,
-                                                color = Color(0xFF2D2D2D)
+                                                color = FlatUiColors.Border
                                             )
 
                                             if (pnpResult!!.pose6DOF != null) {
@@ -874,7 +885,7 @@ fun BrightSpotDetectionApp() {
                                                 ) {
                                                     Text(
                                                         text = "6DOF POSE",
-                                                        color = Color(0xFF0078D4),
+                                                        color = FlatUiColors.Accent,
                                                         style = MaterialTheme.typography.titleSmall
                                                     )
 
@@ -894,7 +905,7 @@ fun BrightSpotDetectionApp() {
                                                                 text = pnpCalculator.formatPoint3D(
                                                                     pnpResult!!.pose6DOF!!.position
                                                                 ),
-                                                                color = Color(0xFF0078D4),
+                                                                color = FlatUiColors.Accent,
                                                                 style = MaterialTheme.typography.bodySmall
                                                             )
                                                         }
@@ -903,12 +914,12 @@ fun BrightSpotDetectionApp() {
                                                     HorizontalDivider(
                                                         modifier = Modifier.padding(vertical = 4.dp),
                                                         thickness = DividerDefaults.Thickness,
-                                                        color = Color(0xFF2D2D2D)
+                                                        color = FlatUiColors.Border
                                                     )
 
                                                     Text(
                                                         text = "ORIENTATION",
-                                                        color = Color(0xFF9A9A9A),
+                                                        color = FlatUiColors.TextMuted,
                                                         style = MaterialTheme.typography.labelSmall
                                                     )
 
@@ -919,14 +930,14 @@ fun BrightSpotDetectionApp() {
                                                         Column {
                                                             Text(
                                                                 text = "ROLL",
-                                                                color = Color(0xFF999999),
+                                                                color = FlatUiColors.TextMuted,
                                                                 style = MaterialTheme.typography.labelSmall
                                                             )
                                                             Text(
                                                                 text = pnpCalculator.formatAngle(
                                                                     pnpResult!!.pose6DOF!!.roll
                                                                 ),
-                                                                color = Color(0xFFE74C3C),
+                                                                color = Color(0xFFE35D5B),
                                                                 style = MaterialTheme.typography.bodyMedium
                                                             )
                                                         }
@@ -934,14 +945,14 @@ fun BrightSpotDetectionApp() {
                                                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                                             Text(
                                                                 text = "PITCH",
-                                                                color = Color(0xFF999999),
+                                                                color = FlatUiColors.TextMuted,
                                                                 style = MaterialTheme.typography.labelSmall
                                                             )
                                                             Text(
                                                                 text = pnpCalculator.formatAngle(
                                                                     pnpResult!!.pose6DOF!!.pitch
                                                                 ),
-                                                                color = Color(0xFF27AE60),
+                                                                color = Color(0xFF2CA36B),
                                                                 style = MaterialTheme.typography.bodyMedium
                                                             )
                                                         }
@@ -949,14 +960,14 @@ fun BrightSpotDetectionApp() {
                                                         Column(horizontalAlignment = Alignment.End) {
                                                             Text(
                                                                 text = "YAW",
-                                                                color = Color(0xFF999999),
+                                                                color = FlatUiColors.TextMuted,
                                                                 style = MaterialTheme.typography.labelSmall
                                                             )
                                                             Text(
                                                                 text = pnpCalculator.formatAngle(
                                                                     pnpResult!!.pose6DOF!!.yaw
                                                                 ),
-                                                                color = Color(0xFF3498DB),
+                                                                color = Color(0xFF2F8FCE),
                                                                 style = MaterialTheme.typography.bodyMedium
                                                             )
                                                         }
@@ -989,6 +1000,8 @@ fun BrightSpotDetectionApp() {
                 ) {
                     SettingsScreen(
                         onDismiss = { showSettings = false },
+                        themeMode = themeMode,
+                        onThemeModeChange = onThemeModeChange,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -1012,12 +1025,14 @@ fun BrightSpotDetectionApp() {
 @Composable
 fun SettingsScreen(
     onDismiss: () -> Unit,
+    themeMode: ThemeMode,
+    onThemeModeChange: (ThemeMode) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val haptic = LocalHapticFeedback.current
     Surface(
         modifier = modifier.fillMaxSize(),
-        color = Color(0xFF1E1E1E)
+        color = FlatUiColors.AppBackground
     ) {
         Column(
             modifier = Modifier
@@ -1033,40 +1048,73 @@ fun SettingsScreen(
                 Text(
                     text = "设置",
                     style = MaterialTheme.typography.headlineLarge,
-                    color = Color.White
+                    color = FlatUiColors.TextPrimary
                 )
-                IconButton(
+                FlatIconActionButton(
                     onClick = {
                         haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
                         onDismiss()
+                    },
+                    icon = {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "返回",
+                            tint = FlatUiColors.TextPrimary
+                        )
                     }
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "返回",
-                        tint = Color.White
-                    )
-                }
+                )
             }
 
             Spacer(modifier = Modifier.height(32.dp))
 
-            // 设置内容（占位）
-            Column(
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
+            FlatPanel {
                 Text(
                     text = "设置选项",
                     style = MaterialTheme.typography.titleLarge,
-                    color = Color.White,
+                    color = FlatUiColors.TextPrimary,
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
 
                 Text(
-                    text = "设置页面内容待完善",
+                    text = "界面已切换为扁平化风格。后续设置项建议继续沿用统一的浅底色板、低对比边框和无阴影按钮。",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFFAAAAAA)
+                    color = FlatUiColors.TextSecondary
                 )
+
+                HorizontalDivider(
+                    thickness = DividerDefaults.Thickness,
+                    color = FlatUiColors.Border
+                )
+
+                Text(
+                    text = "主题模式",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = FlatUiColors.TextPrimary
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    ThemeModeButton(
+                        label = "明亮",
+                        selected = themeMode == ThemeMode.Light,
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                            onThemeModeChange(ThemeMode.Light)
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
+                    ThemeModeButton(
+                        label = "暗黑",
+                        selected = themeMode == ThemeMode.Dark,
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                            onThemeModeChange(ThemeMode.Dark)
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
         }
     }
@@ -1075,71 +1123,236 @@ fun SettingsScreen(
 @Composable
 fun PermissionRequestContent(onRequestPermission: () -> Unit) {
     val haptic = LocalHapticFeedback.current
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF101010))
-            .padding(32.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            text = "需要相机权限",
-            style = MaterialTheme.typography.headlineMedium,
-            color = Color(0xFFE6E6E6),
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(bottom = 16.dp)
-        )
-        Text(
-            text = "此应用需要访问您的相机来检测亮点。",
-            style = MaterialTheme.typography.bodyLarge,
-            color = Color(0xFF9A9A9A),
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(bottom = 32.dp)
-        )
-        Button(onClick = {
+    PermissionCard(
+        title = "需要相机权限",
+        body = "此应用需要访问您的相机来检测亮点。",
+        actionLabel = "授予相机权限",
+        onAction = {
             haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
             onRequestPermission()
-        }) {
-            Text("授予相机权限")
         }
-    }
+    )
 }
 
 @Composable
 fun PermissionRationaleContent(onRequestPermission: () -> Unit) {
     val haptic = LocalHapticFeedback.current
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF101010))
-            .padding(32.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            text = "需要相机权限",
-            style = MaterialTheme.typography.headlineMedium,
-            color = Color(0xFFE6E6E6),
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(bottom = 16.dp)
-        )
-        Text(
-            text = "为了实时检测画面中的亮点，我们需要访问您的相机。\n\n" +
-                    "没有相机权限，应用将无法正常工作。",
-            style = MaterialTheme.typography.bodyLarge,
-            color = Color(0xFF9A9A9A),
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(bottom = 32.dp)
-        )
-        Button(onClick = {
+    PermissionCard(
+        title = "需要相机权限",
+        body = "为了实时检测画面中的亮点，我们需要访问您的相机。\n\n没有相机权限，应用将无法正常工作。",
+        actionLabel = "授予权限",
+        onAction = {
             haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
             onRequestPermission()
-        }) {
-            Text("授予权限")
+        }
+    )
+}
+
+enum class ThemeMode {
+    Light,
+    Dark
+}
+
+private data class FlatPalette(
+    val appBackground: Color,
+    val sidebarBackground: Color,
+    val panel: Color,
+    val border: Color,
+    val accent: Color,
+    val textPrimary: Color,
+    val textSecondary: Color,
+    val textMuted: Color,
+    val textOnAccent: Color
+)
+
+private object FlatUiColors {
+    private val light = FlatPalette(
+        appBackground = Color(0xFFF4F6F8),
+        sidebarBackground = Color(0xFFEAEFF3),
+        panel = Color(0xFFFFFFFF),
+        border = Color(0xFFD6DEE6),
+        accent = Color(0xFF147EFB),
+        textPrimary = Color(0xFF122033),
+        textSecondary = Color(0xFF536276),
+        textMuted = Color(0xFF738296),
+        textOnAccent = Color(0xFFF8FBFF)
+    )
+
+    private val dark = FlatPalette(
+        appBackground = Color(0xFF0F1722),
+        sidebarBackground = Color(0xFF16202D),
+        panel = Color(0xFF1B2635),
+        border = Color(0xFF2B3A4E),
+        accent = Color(0xFF56A3FF),
+        textPrimary = Color(0xFFF3F7FC),
+        textSecondary = Color(0xFFB7C4D4),
+        textMuted = Color(0xFF8A9AAF),
+        textOnAccent = Color(0xFF08111C)
+    )
+
+    private var palette by mutableStateOf(light)
+
+    fun update(themeMode: ThemeMode) {
+        palette = if (themeMode == ThemeMode.Dark) dark else light
+    }
+
+    val AppBackground get() = palette.appBackground
+    val SidebarBackground get() = palette.sidebarBackground
+    val Panel get() = palette.panel
+    val Border get() = palette.border
+    val Accent get() = palette.accent
+    val TextPrimary get() = palette.textPrimary
+    val TextSecondary get() = palette.textSecondary
+    val TextMuted get() = palette.textMuted
+    val TextOnAccent get() = palette.textOnAccent
+}
+
+private object FlatUiShapes {
+    val Panel = RoundedCornerShape(20.dp)
+    val Control = RoundedCornerShape(14.dp)
+}
+
+@Composable
+private fun TriDotFlatTheme(
+    themeMode: ThemeMode,
+    content: @Composable () -> Unit
+) {
+    FlatUiColors.update(themeMode)
+    MaterialTheme(
+        colorScheme = if (themeMode == ThemeMode.Dark) {
+            androidx.compose.material3.darkColorScheme(
+                background = FlatUiColors.AppBackground,
+                surface = FlatUiColors.Panel,
+                primary = FlatUiColors.Accent,
+                onPrimary = FlatUiColors.TextOnAccent,
+                onSurface = FlatUiColors.TextPrimary
+            )
+        } else {
+            lightColorScheme(
+            background = FlatUiColors.AppBackground,
+            surface = FlatUiColors.Panel,
+            primary = FlatUiColors.Accent,
+            onPrimary = FlatUiColors.TextOnAccent,
+            onSurface = FlatUiColors.TextPrimary
+            )
+        },
+        content = content
+    )
+}
+
+@Composable
+private fun FlatPanel(content: @Composable () -> Unit) {
+    Surface(
+        color = FlatUiColors.Panel,
+        shape = FlatUiShapes.Panel,
+        border = BorderStroke(1.dp, FlatUiColors.Border),
+        shadowElevation = 0.dp
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            content()
         }
     }
 }
+
+@Composable
+private fun FlatIconActionButton(
+    onClick: () -> Unit,
+    icon: @Composable () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    IconButton(
+        modifier = modifier,
+        colors = IconButtonDefaults.iconButtonColors(
+            containerColor = FlatUiColors.Panel,
+            contentColor = FlatUiColors.TextPrimary
+        ),
+        shape = FlatUiShapes.Control,
+        onClick = onClick
+    ) {
+        icon()
+    }
+}
+
+@Composable
+private fun ThemeModeButton(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = if (selected) FlatUiColors.Accent else FlatUiColors.Panel,
+            contentColor = if (selected) FlatUiColors.TextOnAccent else FlatUiColors.TextPrimary
+        ),
+        border = if (selected) null else BorderStroke(1.dp, FlatUiColors.Border),
+        shape = FlatUiShapes.Control,
+        elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp)
+    ) {
+        Text(label)
+    }
+}
+
+@Composable
+private fun PermissionCard(
+    title: String,
+    body: String,
+    actionLabel: String,
+    onAction: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(FlatUiColors.AppBackground)
+            .padding(32.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            color = FlatUiColors.Panel,
+            shape = FlatUiShapes.Panel,
+            border = BorderStroke(1.dp, FlatUiColors.Border),
+            shadowElevation = 0.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .width(320.dp)
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = FlatUiColors.TextPrimary,
+                    textAlign = TextAlign.Center
+                )
+                Text(
+                    text = body,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = FlatUiColors.TextSecondary,
+                    textAlign = TextAlign.Center
+                )
+                Button(
+                    onClick = onAction,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = FlatUiColors.Accent,
+                        contentColor = FlatUiColors.TextOnAccent
+                    ),
+                    shape = FlatUiShapes.Control,
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp)
+                ) {
+                    Text(actionLabel)
+                }
+            }
+        }
+    }
+}
+
 
 
 

@@ -11,6 +11,7 @@ import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
@@ -39,7 +40,6 @@ import androidx.core.content.ContextCompat
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import android.widget.Toast
 import androidx.annotation.OptIn
 import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2CameraInfo
@@ -47,6 +47,7 @@ import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.FocusMeteringAction
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import androidx.core.graphics.scale
@@ -54,7 +55,10 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 @androidx.camera.camera2.interop.ExperimentalCamera2Interop
 @OptIn(ExperimentalCamera2Interop::class)
@@ -82,6 +86,14 @@ fun CameraPreview(
     var camera by remember { mutableStateOf<Camera?>(null) }
     var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
     var zoomRatioDisplay by remember { mutableFloatStateOf(1f) }
+    var focusMarkerVisible by remember { mutableStateOf(false) }
+    var focusMarkerColor by remember { mutableStateOf(Color.White) }
+    val focusMarkerRotation = remember { Animatable(0f) }
+    val focusMarkerAlpha = remember { Animatable(1f) }
+    val focusMarkerGapOffset = remember { Animatable(0f) }
+    var focusMarkerAnimJob by remember { mutableStateOf<Job?>(null) }
+    var halfPressActive by remember { mutableStateOf(false) }
+    val forceGlobalSearchRequested = remember { AtomicBoolean(false) }
 
     // 跟踪上一个三色点的三个位置（用于ROI优化）
     var lastTriSpots by remember { mutableStateOf<Triple<Offset, Offset, Offset>?>(null) }
@@ -106,6 +118,7 @@ fun CameraPreview(
 
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
+    val coroutineScope = rememberCoroutineScope()
 
     // 帧率计算相关 - 使用Atomic类型确保线程安全
     val frameCount = remember { AtomicInteger(0) }
@@ -167,32 +180,76 @@ fun CameraPreview(
         ShutterKeyController.events.collectLatest { event ->
             when (event) {
                 ShutterKeyEvent.HALF_PRESS_DOWN -> {
+                    if (halfPressActive) return@collectLatest
+                    halfPressActive = true
                     val cam = camera ?: return@collectLatest
                     val pv = previewViewRef ?: return@collectLatest
-                    val point = pv.meteringPointFactory.createPoint(
-                        pv.width / 2f,
-                        pv.height / 2f
-                    )
+                    focusMarkerAnimJob?.cancel()
+                    focusMarkerVisible = true
+                    focusMarkerColor = Color.White
+                    coroutineScope.launch {
+                        focusMarkerRotation.snapTo(0f)
+                        focusMarkerAlpha.snapTo(1f)
+                        focusMarkerGapOffset.snapTo(0f)
+                        // 出现瞬间做一次间隔脉动，模拟“对焦吸附”效果
+                        focusMarkerGapOffset.animateTo(12f, animationSpec = tween(durationMillis = 135))
+                        focusMarkerGapOffset.animateTo(-6f, animationSpec = tween(durationMillis = 135))
+                        focusMarkerGapOffset.animateTo(0f, animationSpec = tween(durationMillis = 180))
+                    }
+                    // 对焦点取“实际预览显示区域”的中心（FIT_START 下不是整个 View 的中心）
+                    val (focusX, focusY) = previewSize?.let { (imageW, imageH) ->
+                        val viewW = pv.width.toFloat().coerceAtLeast(1f)
+                        val viewH = pv.height.toFloat().coerceAtLeast(1f)
+                        val scale = kotlin.math.min(viewW / imageW.toFloat(), viewH / imageH.toFloat())
+                        Pair(imageW * scale / 2f, imageH * scale / 2f)
+                    } ?: Pair(pv.width / 2f, pv.height / 2f)
+                    val point = pv.meteringPointFactory.createPoint(focusX, focusY)
                     val action = FocusMeteringAction.Builder(point).build()
-                    cam.cameraControl.startFocusAndMetering(action)
+                    val focusFuture = cam.cameraControl.startFocusAndMetering(action)
+                    focusFuture.addListener(
+                        {
+                            val success = runCatching { focusFuture.get().isFocusSuccessful }.getOrDefault(false)
+                            focusMarkerAnimJob?.cancel()
+                            focusMarkerAnimJob = coroutineScope.launch {
+                                focusMarkerColor = if (success) Color(0xFF4CAF50) else Color(0xFFFF9800)
+                                focusMarkerVisible = true
+                                focusMarkerRotation.snapTo(0f)
+                                focusMarkerAlpha.snapTo(1f)
+                                focusMarkerGapOffset.snapTo(0f)
+
+                                if (success) {
+                                    launch {
+                                        focusMarkerRotation.animateTo(
+                                            targetValue = 180f,
+                                            animationSpec = tween(durationMillis = 420)
+                                        )
+                                    }
+                                    focusMarkerAlpha.animateTo(
+                                        targetValue = 0f,
+                                        animationSpec = tween(durationMillis = 420, delayMillis = 40)
+                                    )
+                                } else {
+                                    focusMarkerAlpha.animateTo(
+                                        targetValue = 0f,
+                                        animationSpec = tween(durationMillis = 320, delayMillis = 480)
+                                    )
+                                }
+                                focusMarkerVisible = false
+                            }
+                        },
+                        ContextCompat.getMainExecutor(context)
+                    )
                     Log.d("ShutterKey", "HALF_PRESS_DOWN captured")
-                    Toast.makeText(
-                        context,
-                        "轻按",
-                        Toast.LENGTH_SHORT
-                    ).show()
                 }
 
                 ShutterKeyEvent.FULL_PRESS_DOWN -> {
+                    forceGlobalSearchRequested.set(true)
+                    roiVisualizationInfo = null
                     Log.d("ShutterKey", "FULL_PRESS_DOWN captured")
-                    Toast.makeText(
-                        context,
-                        "重按",
-                        Toast.LENGTH_SHORT
-                    ).show()
                 }
 
                 ShutterKeyEvent.HALF_PRESS_UP -> {
+                    halfPressActive = false
                     Log.d("ShutterKey", "HALF_PRESS_UP captured")
                 }
 
@@ -588,6 +645,7 @@ fun CameraPreview(
                                         lastTriSpotsImageSize = if (currentEnableRoiOptimization.value) lastTriSpotsImageSize else null,
                                         manualRoi = currentManualRoi,
                                         limitRegion = currentLimitRegion,
+                                        forceGlobalSearch = forceGlobalSearchRequested.getAndSet(false),
                                         onRoiInfo = { info ->
                                             // 在主线程中更新ROI可视化信息
                                             mainHandler.post {
@@ -1311,6 +1369,56 @@ fun CameraPreview(
             }
         }
 
+        if (focusMarkerVisible) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                // 图标中心：使用预览实际显示区域中心，避免在 FIT_START + 留白时偏右/偏下
+                val (cx, cy) = previewSize?.let { (imageW, imageH) ->
+                    val scale = min(size.width / imageW.toFloat(), size.height / imageH.toFloat())
+                    Pair(imageW * scale / 2f, imageH * scale / 2f)
+                } ?: Pair(size.width / 2f, size.height / 2f)
+
+                // 中间空心圆半径：越大整体图标越醒目
+                val radius = 12f
+                // 中间空心圆线宽：越粗越有“机械对焦框”质感
+                val ringStroke = 3.6f
+                // 辐条与圆之间的间隔：出现时会做脉动变化，模拟对焦过程
+                val lineGap = (21f + focusMarkerGapOffset.value).coerceIn(6f, 36f)
+                // 辐条长度：越长越有方向感
+                val lineLen = 64f
+                // 辐条线宽：越粗越强调对焦状态
+                val lineStroke = 2.8f
+                val alpha = focusMarkerAlpha.value.coerceIn(0f, 1f)
+                val color = focusMarkerColor.copy(alpha = alpha)
+                // 第一根辐条朝向正上方（-90°），其余每隔120°
+                val baseAngles = floatArrayOf(-90f, 30f, 150f)
+                val rotation = focusMarkerRotation.value
+
+                drawCircle(
+                    color = color,
+                    radius = radius,
+                    center = Offset(cx, cy),
+                    style = Stroke(width = ringStroke)
+                )
+
+                baseAngles.forEach { base ->
+                    val deg = base + rotation
+                    val rad = Math.toRadians(deg.toDouble())
+                    val ux = kotlin.math.cos(rad).toFloat()
+                    val uy = kotlin.math.sin(rad).toFloat()
+
+                    val start = Offset(
+                        x = cx + ux * (radius + lineGap),
+                        y = cy + uy * (radius + lineGap)
+                    )
+                    val end = Offset(
+                        x = cx + ux * (radius + lineGap + lineLen),
+                        y = cy + uy * (radius + lineGap + lineLen)
+                    )
+                    drawLine(color = color, start = start, end = end, strokeWidth = lineStroke)
+                }
+            }
+        }
+
         Text(
             text = "${"%.1f".format(zoomRatioDisplay)}x",
             color = Color.White,
@@ -1391,6 +1499,7 @@ private fun processImage(
     lastTriSpotsImageSize: Pair<Int, Int>? = null,
     manualRoi: ManualRoiCoords? = null,
     limitRegion: ManualRoiCoords? = null,
+    forceGlobalSearch: Boolean = false,
     onRoiInfo: ((RoiVisualizationInfo?) -> Unit)? = null,
     onSpotsDetected: (List<BrightSpot>, Pair<Int, Int>, Boolean) -> Unit,
     captureBitmapForCalibration: Boolean = false,
@@ -1419,7 +1528,10 @@ private fun processImage(
 
         // 限制区域映射到 workingBitmap
         data class LimitRegionWorking(val left: Int, val top: Int, val right: Int, val bottom: Int)
-        val limitRegionWorking = limitRegion?.let {
+        val effectiveLimitRegion = if (forceGlobalSearch) null else limitRegion
+        val effectiveManualRoi = if (forceGlobalSearch) null else manualRoi
+
+        val limitRegionWorking = effectiveLimitRegion?.let {
             val w = workingBitmap.width
             val h = workingBitmap.height
             val l = (it.left * workingScale).toInt().coerceIn(0, w - 1)
@@ -1430,7 +1542,7 @@ private fun processImage(
         }
 
         // 上一次三色点映射到当前图像
-        val initialRoiInfo = if (enableRoiOptimization && lastTriSpots != null && lastTriSpotsImageSize != null) {
+        val initialRoiInfo = if (!forceGlobalSearch && enableRoiOptimization && lastTriSpots != null && lastTriSpotsImageSize != null) {
             val (lastW, lastH) = lastTriSpotsImageSize
             val (currW, currH) = rotatedBitmap.width to rotatedBitmap.height
             val scaleX = currW.toFloat() / lastW
@@ -1449,12 +1561,12 @@ private fun processImage(
         val maxRecentAttempts = 7  // 最近的尝试次数
         val failureThreshold = 4  // 失败次数阈值，如果失败次数大于此阈值，则触发全局搜索
 
-        val (spotsScaled, foundInManualRoi) = if (manualRoi != null) {
+        val (spotsScaled, foundInManualRoi) = if (effectiveManualRoi != null) {
             // 手动ROI的逻辑与之前相同，保持不变
-            val roiLeftOrig = manualRoi.left
-            val roiTopOrig = manualRoi.top
-            val roiRightOrig = manualRoi.right
-            val roiBottomOrig = manualRoi.bottom
+            val roiLeftOrig = effectiveManualRoi.left
+            val roiTopOrig = effectiveManualRoi.top
+            val roiRightOrig = effectiveManualRoi.right
+            val roiBottomOrig = effectiveManualRoi.bottom
             val workingWidth = workingBitmap.width
             val workingHeight = workingBitmap.height
 

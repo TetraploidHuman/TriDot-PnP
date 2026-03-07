@@ -39,6 +39,7 @@ class MainActivity : ComponentActivity() {
             // Xperia 二段快门键：半按（FOCUS）/全按（CAMERA）
             KeyEvent.KEYCODE_FOCUS -> {
                 if (event.action == KeyEvent.ACTION_DOWN) {
+                    if (event.repeatCount > 0) return true
                     ShutterKeyController.emit(ShutterKeyEvent.HALF_PRESS_DOWN)
                 } else if (event.action == KeyEvent.ACTION_UP) {
                     ShutterKeyController.emit(ShutterKeyEvent.HALF_PRESS_UP)
@@ -48,6 +49,7 @@ class MainActivity : ComponentActivity() {
 
             KeyEvent.KEYCODE_CAMERA -> {
                 if (event.action == KeyEvent.ACTION_DOWN) {
+                    if (event.repeatCount > 0) return true
                     ShutterKeyController.emit(ShutterKeyEvent.FULL_PRESS_DOWN)
                 } else if (event.action == KeyEvent.ACTION_UP) {
                     ShutterKeyController.emit(ShutterKeyEvent.FULL_PRESS_UP)

@@ -14,10 +14,12 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -112,145 +114,144 @@ fun BrightSpotDetectionApp() {
     Box(modifier = Modifier.fillMaxSize()) {
         when {
             cameraPermissionState.status.isGranted -> {
-                val previewAreaModifier = Modifier
-                    .align(Alignment.TopStart)
-                    .fillMaxHeight()
-                    .padding(end = 320.dp)
-
-                Box(modifier = previewAreaModifier) {
-                    // 相机预览
-                    CameraPreview(
-                        modifier = Modifier.fillMaxSize(),
-                        exposureCompensation = exposureCompensation,
-                        gridSize = gridSize,
-                        probabilityMatrix = probabilityMatrix,
-                        detector = detector,  // 传递detector实例
-                        enableRoiOptimization = enableRoiOptimization,
-                        onFpsUpdate = { newFps ->
-                            fps = newFps
-                        },
-                        onBrightSpotsDetected = { spots, size ->
-                            detectedSpotsCount = spots.size
-                            detectedSpots = spots
-                            imageSize = size
-
-                            // 仅保留3点模式：RGB三色LED，计算完整6DOF姿态
-                            if (spots.size == 3 && size != null) {
-                                val redSpot = spots.find { it.color == LedColor.RED }
-                                val greenSpot = spots.find { it.color == LedColor.GREEN }
-                                val blueSpot = spots.find { it.color == LedColor.BLUE }
-
-                                pnpResult =
-                                    if (redSpot != null && greenSpot != null && blueSpot != null) {
-                                        pnpCalculator.calculate3PointPnP(
-                                            redPoint = redSpot.position,
-                                            greenPoint = greenSpot.position,
-                                            bluePoint = blueSpot.position,
-                                            triangleEdgeLength = knownDistance,
-                                            focalLength = null,
-                                            imageWidth = size.first,
-                                            imageHeight = size.second
-                                        )
-                                    } else {
-                                        null  // 未检测到完整的RGB三色
-                                    }
-                            } else {
-                                pnpResult = null
-                            }
-                        },
-                        onBitmapCaptured = { bitmap ->
-                            // 释放旧的bitmap
-                            calibrationBitmap?.recycle()
-                            calibrationBitmap = bitmap
-                        },
-                        captureBitmapForCalibration = isCalibrating
-                    )
-
-                    // 校准标记（校准模式下显示）
-                    if (isCalibrating) {
-                        // Canvas层：不拦截触摸事件，让事件穿透到CameraPreview进行ROI选择
-                        Canvas(
-                            modifier = Modifier.fillMaxSize()
+                    Row(modifier = Modifier.fillMaxSize()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .aspectRatio(4f / 3f, matchHeightConstraintsFirst = true)
                         ) {
-                            val centerX = size.width / 2f
-                            val centerY = size.height / 2f
-                            // 使用屏幕最小尺寸计算，确保在横屏和竖屏下都有合适的大小
-                            val calibrationRadius = kotlin.math.min(size.width, size.height) * 0.20f
+                            // 相机预览
+                            CameraPreview(
+                                modifier = Modifier.fillMaxSize(),
+                                exposureCompensation = exposureCompensation,
+                                gridSize = gridSize,
+                                probabilityMatrix = probabilityMatrix,
+                                detector = detector,  // 传递detector实例
+                                enableRoiOptimization = enableRoiOptimization,
+                                onFpsUpdate = { newFps ->
+                                    fps = newFps
+                                },
+                                onBrightSpotsDetected = { spots, size ->
+                                    detectedSpotsCount = spots.size
+                                    detectedSpots = spots
+                                    imageSize = size
 
-                        // 绘制校准圆框（彩虹渐变效果）
-                        // 外圈 - 半透明白色
-                        drawCircle(
-                            color = Color(0xAAFFFFFF),
-                            radius = calibrationRadius + 10f,
-                            center = Offset(centerX, centerY),
-                            style = Stroke(width = 4f)
-                        )
+                                    // 仅保留3点模式：RGB三色LED，计算完整6DOF姿态
+                                    if (spots.size == 3 && size != null) {
+                                        val redSpot = spots.find { it.color == LedColor.RED }
+                                        val greenSpot = spots.find { it.color == LedColor.GREEN }
+                                        val blueSpot = spots.find { it.color == LedColor.BLUE }
 
-                        // 中圈 - 彩色渐变提示
-                        drawCircle(
-                            color = Color(0xCCFFFFFF),
-                            radius = calibrationRadius,
-                            center = Offset(centerX, centerY),
-                            style = Stroke(width = 8f)
-                        )
+                                        pnpResult =
+                                            if (redSpot != null && greenSpot != null && blueSpot != null) {
+                                                pnpCalculator.calculate3PointPnP(
+                                                    redPoint = redSpot.position,
+                                                    greenPoint = greenSpot.position,
+                                                    bluePoint = blueSpot.position,
+                                                    triangleEdgeLength = knownDistance,
+                                                    focalLength = null,
+                                                    imageWidth = size.first,
+                                                    imageHeight = size.second
+                                                )
+                                            } else {
+                                                null  // 未检测到完整的RGB三色
+                                            }
+                                    } else {
+                                        pnpResult = null
+                                    }
+                                },
+                                onBitmapCaptured = { bitmap ->
+                                    // 释放旧的bitmap
+                                    calibrationBitmap?.recycle()
+                                    calibrationBitmap = bitmap
+                                },
+                                captureBitmapForCalibration = isCalibrating
+                            )
 
-                        // 内圈 - 半透明
-                        drawCircle(
-                            color = Color(0x33FFFFFF),
-                            radius = calibrationRadius - 10f,
-                            center = Offset(centerX, centerY)
-                        )
+                            // 校准标记（校准模式下显示）
+                            if (isCalibrating) {
+                                // Canvas层：不拦截触摸事件，让事件穿透到CameraPreview进行ROI选择
+                                Canvas(
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    val centerX = size.width / 2f
+                                    val centerY = size.height / 2f
+                                    // 使用屏幕最小尺寸计算，确保在横屏和竖屏下都有合适的大小
+                                    val calibrationRadius = kotlin.math.min(size.width, size.height) * 0.20f
 
-                        // 中心十字线
-                        drawLine(
-                            color = Color(0xAAFFFFFF),
-                            start = Offset(centerX - 40f, centerY),
-                            end = Offset(centerX + 40f, centerY),
-                            strokeWidth = 3f
-                        )
-                        drawLine(
-                            color = Color(0xAAFFFFFF),
-                            start = Offset(centerX, centerY - 40f),
-                            end = Offset(centerX, centerY + 40f),
-                            strokeWidth = 3f
-                        )
+                                // 绘制校准圆框（彩虹渐变效果）
+                                // 外圈 - 半透明白色
+                                drawCircle(
+                                    color = Color(0xAAFFFFFF),
+                                    radius = calibrationRadius + 10f,
+                                    center = Offset(centerX, centerY),
+                                    style = Stroke(width = 4f)
+                                )
 
-                        // 绘制RGB标识（圆框边缘）
-                        drawContext.canvas.nativeCanvas.apply {
-                            val paint = android.graphics.Paint().apply {
-                                textSize = 36f
-                                textAlign = android.graphics.Paint.Align.CENTER
-                                isFakeBoldText = true
-                                setShadowLayer(8f, 0f, 0f, android.graphics.Color.BLACK)
+                                // 中圈 - 彩色渐变提示
+                                drawCircle(
+                                    color = Color(0xCCFFFFFF),
+                                    radius = calibrationRadius,
+                                    center = Offset(centerX, centerY),
+                                    style = Stroke(width = 8f)
+                                )
+
+                                // 内圈 - 半透明
+                                drawCircle(
+                                    color = Color(0x33FFFFFF),
+                                    radius = calibrationRadius - 10f,
+                                    center = Offset(centerX, centerY)
+                                )
+
+                                // 中心十字线
+                                drawLine(
+                                    color = Color(0xAAFFFFFF),
+                                    start = Offset(centerX - 40f, centerY),
+                                    end = Offset(centerX + 40f, centerY),
+                                    strokeWidth = 3f
+                                )
+                                drawLine(
+                                    color = Color(0xAAFFFFFF),
+                                    start = Offset(centerX, centerY - 40f),
+                                    end = Offset(centerX, centerY + 40f),
+                                    strokeWidth = 3f
+                                )
+
+                                // 绘制RGB标识（圆框边缘）
+                                drawContext.canvas.nativeCanvas.apply {
+                                    val paint = android.graphics.Paint().apply {
+                                        textSize = 36f
+                                        textAlign = android.graphics.Paint.Align.CENTER
+                                        isFakeBoldText = true
+                                        setShadowLayer(8f, 0f, 0f, android.graphics.Color.BLACK)
+                                    }
+
+                                    // 红色标识（左）
+                                    paint.color = android.graphics.Color.rgb(255, 51, 51)
+                                    drawText("R", centerX - calibrationRadius - 50f, centerY + 12f, paint)
+
+                                    // 绿色标识（上）
+                                    paint.color = android.graphics.Color.rgb(51, 255, 51)
+                                    drawText("G", centerX, centerY - calibrationRadius - 40f, paint)
+
+                                    // 蓝色标识（右）
+                                    paint.color = android.graphics.Color.rgb(51, 102, 255)
+                                    drawText("B", centerX + calibrationRadius + 50f, centerY + 12f, paint)
+                                }
+                                }
                             }
-
-                            // 红色标识（左）
-                            paint.color = android.graphics.Color.rgb(255, 51, 51)
-                            drawText("R", centerX - calibrationRadius - 50f, centerY + 12f, paint)
-
-                            // 绿色标识（上）
-                            paint.color = android.graphics.Color.rgb(51, 255, 51)
-                            drawText("G", centerX, centerY - calibrationRadius - 40f, paint)
-
-                            // 蓝色标识（右）
-                            paint.color = android.graphics.Color.rgb(51, 102, 255)
-                            drawText("B", centerX + calibrationRadius + 50f, centerY + 12f, paint)
                         }
-                    }
-                }
-                }
 
-                // 右侧控制面板（常显，支持上下滚动）
-                Surface(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .width(320.dp)
-                        .fillMaxHeight(),
-                    color = Color(0xFF121212)
-                ) {
-                    Box(
-                        modifier = Modifier.fillMaxSize()
-                    ) {
+                        // 右侧控制面板（常显，支持上下滚动）
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                            color = Color(0xFF121212)
+                        ) {
+                            Box(
+                                modifier = Modifier.fillMaxSize()
+                            ) {
                             IconButton(
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
@@ -966,8 +967,10 @@ fun BrightSpotDetectionApp() {
                                     }
                                 }
                             }
+                            }
                         }
-                }
+                    }
+
 
                 // 设置页面（全屏覆盖，带过渡动画）
                 AnimatedVisibility(

@@ -1430,8 +1430,8 @@ fun CameraPreview(
             color = Color.White,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(14.dp)
-                .background(Color(0x77000000), RoundedCornerShape(10.dp))
+                .padding(8.dp)
+                //.background(Color(0x77000000), RoundedCornerShape(3.dp))
                 .padding(horizontal = 10.dp, vertical = 6.dp)
         )
     }

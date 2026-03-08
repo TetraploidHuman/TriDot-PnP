@@ -121,42 +121,8 @@ fun BrightSpotDetectionApp(
     val detector = remember { BrightSpotDetector() }
 
     LaunchedEffect(tuning) {
-        detector.minPixelBrightness = tuning.minPixelBrightness
-        detector.minTotalBrightness = tuning.minTotalBrightness
-        detector.dynamicThresholdMin = tuning.dynamicThresholdMin
-        detector.dynamicThresholdRatio = tuning.dynamicThresholdRatio
-        detector.minPixelCount = tuning.minPixelCount
-        detector.minRefineRadius = tuning.detectorMinRefineRadius
-        detector.maxBrightPixelRatio = tuning.maxBrightPixelRatio
-        detector.maxBrightPixelCountMin = tuning.maxBrightPixelCountMin
-        detector.hsvMinSaturation = tuning.hsvMinSaturation
-        detector.hsvMinValue = tuning.hsvMinValue
-        detector.hsvHueWeight = tuning.hsvHueWeight
-        detector.hsvSatWeight = tuning.hsvSatWeight
-        detector.hsvValWeight = tuning.hsvValWeight
-        detector.hsvSharpness = tuning.hsvSharpness
-        detector.triShapePenaltyWeight = tuning.triShapePenaltyWeight
-        detector.triGeometryPenaltyWeight = tuning.triGeometryPenaltyWeight
-        detector.triPurityBoostWeight = tuning.triPurityBoostWeight
-        detector.triCenterBlackWeight = tuning.triCenterBlackWeight
-        detector.triColorScoreWeight = tuning.triColorScoreWeight
-        detector.topNCandidatesPerColor = tuning.topNCandidatesPerColor
-        detector.minPairDistanceMultiplier = tuning.minPairDistanceMultiplier
-        detector.maxPairDistanceMultiplier = tuning.maxPairDistanceMultiplier
-        detector.darkBackgroundBoost = tuning.darkBackgroundBoost
-        detector.probabilityCandidateExponent = tuning.probabilityCandidateExponent
-        detector.probabilityGroupExponent = tuning.probabilityGroupExponent
-        detector.probabilityWeightFloor = tuning.probabilityWeightFloor
-        detector.calibrationSearchStep = tuning.calibrationSearchStep
-        detector.calibrationSearchRadius = tuning.calibrationSearchRadius
-        detector.sampleTopPercent = tuning.sampleTopPercent
-
-        pnpCalculator.estimatedFovDegrees = tuning.estimatedFovDegrees
-        pnpCalculator.depthInitFallbackMm = tuning.pnpDepthInitFallbackMm
-        pnpCalculator.solverMaxIterations = tuning.pnpSolverMaxIterations
-        pnpCalculator.solverConvergenceErrorMm = tuning.pnpSolverConvergenceErrorMm
-        pnpCalculator.solverLearningRate = tuning.pnpSolverLearningRate
-        pnpCalculator.solverMinDepthMm = tuning.pnpSolverMinDepthMm
+        detector.applyTuning(tuning)
+        pnpCalculator.applyTuning(tuning)
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -191,30 +157,12 @@ fun BrightSpotDetectionApp(
                                     detectedSpotsCount = spots.size
                                     detectedSpots = spots
                                     imageSize = size
-
-                                    // 仅保留3点模式：RGB三色LED，计算完整6DOF姿态
-                                    if (spots.size == 3 && size != null) {
-                                        val redSpot = spots.find { it.color == LedColor.RED }
-                                        val greenSpot = spots.find { it.color == LedColor.GREEN }
-                                        val blueSpot = spots.find { it.color == LedColor.BLUE }
-
-                                        pnpResult =
-                                            if (redSpot != null && greenSpot != null && blueSpot != null) {
-                                                pnpCalculator.calculate3PointPnP(
-                                                    redPoint = redSpot.position,
-                                                    greenPoint = greenSpot.position,
-                                                    bluePoint = blueSpot.position,
-                                                    triangleEdgeLength = tuning.knownTriangleEdgeLengthMm,
-                                                    focalLength = null,
-                                                    imageWidth = size.first,
-                                                    imageHeight = size.second
-                                                )
-                                            } else {
-                                                null  // 未检测到完整的RGB三色
-                                            }
-                                    } else {
-                                        pnpResult = null
-                                    }
+                                    pnpResult = calculateRgbPnpResult(
+                                        spots = spots,
+                                        imageSize = size,
+                                        tuning = tuning,
+                                        pnpCalculator = pnpCalculator
+                                    )
                                 },
                                 onBitmapCaptured = { bitmap ->
                                     // 释放旧的bitmap
@@ -411,702 +359,41 @@ fun BrightSpotDetectionApp(
                                 Column(
                                     verticalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
-                                    // 精度控制
-                                    Text(
-                                        text = "PRECISION",
-                                        color = FlatUiColors.TextMuted,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        modifier = Modifier.padding(top = 4.dp)
-                                    )
-                                    Column(
-                                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                text = "${tuning.gridSize}×${tuning.gridSize}",
-                                                color = FlatUiColors.Accent,
-                                                style = MaterialTheme.typography.titleMedium
-                                            )
-                                            Text(
-                                                text = "${tuning.gridSize * tuning.gridSize}",
-                                                color = FlatUiColors.TextMuted,
-                                                style = MaterialTheme.typography.bodySmall
-                                            )
+                                    DetectionControlSection(
+                                        tuning = tuning,
+                                        onTuningChange = { tuning = it },
+                                        lastGridSizeHapticStep = lastGridSizeHapticStep,
+                                        onGridHapticStepChange = { lastGridSizeHapticStep = it },
+                                        gridSliderInteractionSource = gridSliderInteractionSource,
+                                        targetSpotCount = targetSpotCount,
+                                        calibrationData = calibrationData,
+                                        isCalibrating = isCalibrating,
+                                        onClearCalibration = {
+                                            calibrationData = null
+                                            detector.setCalibration(null)
+                                            Log.d("Calibration", "已清除校准数据")
+                                            Toast.makeText(context, "已清除校准", Toast.LENGTH_SHORT).show()
+                                        },
+                                        onCalibrationAction = {
+                                            if (isCalibrating) {
+                                                calibrationData = executeCalibration(
+                                                    context = context,
+                                                    detector = detector,
+                                                    calibrationBitmap = calibrationBitmap
+                                                )
+                                            }
+                                            isCalibrating = !isCalibrating
                                         }
-                                        Slider(
-                                            value = tuning.gridSize.toFloat(),
-                                            onValueChange = { value ->
-                                                val rounded = kotlin.math.round(value / 8f).toInt() * 8
-                                                val newGridSize = rounded.coerceIn(32, 512)
-                                                if (newGridSize != lastGridSizeHapticStep) {
-                                                    haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
-                                                    lastGridSizeHapticStep = newGridSize
-                                                }
-                                                tuning = tuning.copy(gridSize = newGridSize)
-                                            },
-                                            onValueChangeFinished = {
-                                                haptic.performHapticFeedback(HapticFeedbackType.GestureEnd)
-                                            },
-                                            valueRange = 32f..512f,
-                                            steps = ((512 - 32) / 32 - 1),
-                                            interactionSource = gridSliderInteractionSource,
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    }
-
-                                    // 曝光控制（横向）
-                                    Text(
-                                        text = "EXPOSURE",
-                                        color = FlatUiColors.TextMuted,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        modifier = Modifier.padding(top = 4.dp)
-                                    )
-                                    Surface(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(80.dp),
-                                        shape = MaterialTheme.shapes.small,
-                                        color = FlatUiColors.Panel
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.fillMaxSize(),
-                                            horizontalArrangement = Arrangement.SpaceEvenly,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            IconButton(
-                                                onClick = {
-                                                    haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
-                                                    if (tuning.exposureCompensation > -6) {
-                                                        tuning = tuning.copy(
-                                                            exposureCompensation = tuning.exposureCompensation - 1
-                                                        )
-                                                    }
-                                                }
-                                            ) {
-                                                Text(
-                                                    "-",
-                                                    style = MaterialTheme.typography.headlineMedium,
-                                                    color = FlatUiColors.TextPrimary
-                                                )
-                                            }
-                                            Text(
-                                                text = when {
-                                                    tuning.exposureCompensation > 0 -> "+${tuning.exposureCompensation}"
-                                                    else -> "${tuning.exposureCompensation}"
-                                                },
-                                                color = FlatUiColors.Accent,
-                                                style = MaterialTheme.typography.headlineLarge
-                                            )
-                                            IconButton(
-                                                onClick = {
-                                                    haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
-                                                    if (tuning.exposureCompensation < 6) {
-                                                        tuning = tuning.copy(
-                                                            exposureCompensation = tuning.exposureCompensation + 1
-                                                        )
-                                                    }
-                                                }
-                                            ) {
-                                                Text(
-                                                    "+",
-                                                    style = MaterialTheme.typography.headlineMedium,
-                                                    color = FlatUiColors.TextPrimary
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    // ROI优化开关（仅在3点模式显示）
-                                    if (targetSpotCount == 3) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                text = "ROI OPTIMIZATION",
-                                                color = FlatUiColors.TextMuted,
-                                                style = MaterialTheme.typography.labelSmall
-                                            )
-                                            Surface(
-                                                modifier = Modifier
-                                                    .height(36.dp)
-                                                    .width(64.dp),
-                                                shape = MaterialTheme.shapes.small,
-                                                color = if (tuning.enableRoiOptimization) Color(0xFF2CA36B) else Color(
-                                                    0xFFCCCCCC
-                                                ),
-                                                shadowElevation = 0.dp
-                                            ) {
-                                                TextButton(
-                                                    onClick = {
-                                                        haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
-                                                        tuning = tuning.copy(
-                                                            enableRoiOptimization = !tuning.enableRoiOptimization
-                                                        )
-                                                    },
-                                                    modifier = Modifier.fillMaxSize(),
-                                                    contentPadding = PaddingValues(0.dp)
-                                                ) {
-                                                    Text(
-                                                        text = if (tuning.enableRoiOptimization) "ON" else "OFF",
-                                                        color = if (tuning.enableRoiOptimization) Color.White else Color(
-                                                            0xFF666666
-                                                        ),
-                                                        style = MaterialTheme.typography.labelMedium
-                                                    )
-                                                }
-                                            }
-                                        }
-
-                                        // 校准按钮（仅在3点模式显示）
-                                        HorizontalDivider(
-                                            modifier = Modifier.padding(vertical = 4.dp),
-                                            thickness = DividerDefaults.Thickness,
-                                            color = FlatUiColors.Border
-                                        )
-                                        Text(
-                                            text = "CALIBRATION",
-                                            color = FlatUiColors.TextMuted,
-                                            style = MaterialTheme.typography.labelSmall
-                                        )
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            // 清除校准按钮（仅在已校准状态显示）
-                                            if (calibrationData != null && !isCalibrating) {
-                                                Surface(
-                                                    modifier = Modifier
-                                                        .weight(1f)
-                                                        .height(40.dp),
-                                                    shape = MaterialTheme.shapes.small,
-                                                    color = Color(0xFFE35D5B),
-                                                    shadowElevation = 0.dp
-                                                ) {
-                                                    TextButton(
-                                                        onClick = {
-                                                            haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
-                                                            calibrationData = null
-                                                            detector.setCalibration(null)
-                                                           Log.d(
-                                                                "Calibration",
-                                                                "已清除校准数据"
-                                                            )
-                                                            Toast.makeText(
-                                                                context,
-                                                                "已清除校准",
-                                                                Toast.LENGTH_SHORT
-                                                            ).show()
-                                                        },
-                                                        modifier = Modifier.fillMaxSize(),
-                                                        contentPadding = PaddingValues(0.dp)
-                                                    ) {
-                                                        Text(
-                                                            text = "? 清除",
-                                                            color = Color.White,
-                                                            style = MaterialTheme.typography.labelMedium
-                                                        )
-                                                    }
-                                                }
-                                            }
-
-                                            // 校准/确认按钮
-                                            Surface(
-                                                modifier = Modifier
-                                                    .weight(1f)
-                                                    .height(40.dp),
-                                                shape = MaterialTheme.shapes.small,
-                                                color = if (isCalibrating) Color(0xFFF0A229) else Color(
-                                                    0xFF0078D4
-                                                ),
-                                                shadowElevation = 0.dp
-                                            ) {
-                                                TextButton(
-                                                    onClick = {
-                                                        haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
-                                                        if (isCalibrating) {
-                                                            // 执行校准
-                                                            try {
-                                                                calibrationBitmap?.let { originalBitmap ->
-                                                                    if (!originalBitmap.isRecycled) {
-                                                                        // 立即创建一个不可变副本，防止在校准过程中被回收
-                                                                        val bitmap =
-                                                                            originalBitmap.copy(
-                                                                                originalBitmap.config
-                                                                                    ?: android.graphics.Bitmap.Config.ARGB_8888,
-                                                                                false
-                                                                            )
-
-                                                                        val width = bitmap.width
-                                                                        val height = bitmap.height
-
-                                                                        // 定义校准圆框的范围（图像坐标）
-                                                                        val centerX = width / 2
-                                                                        val centerY = height / 2
-                                                                        val calibrationRadius =
-                                                                            (width * 0.25f).toInt()  // 圆框半径为图像宽度的25%
-
-                                                                        Log.d(
-                                                                            "Calibration",
-                                                                            "=== 开始自动校准 ==="
-                                                                        )
-                                                                        Log.d(
-                                                                            "Calibration",
-                                                                            "图像尺寸: ${width}x${height}"
-                                                                        )
-                                                                        Log.d(
-                                                                            "Calibration",
-                                                                            "搜索区域: 中心($centerX,$centerY), 半径=$calibrationRadius"
-                                                                        )
-
-                                                                        // 在圆框内搜索最红、最绿、最蓝的点
-                                                                        val result =
-                                                                            detector.findRGBColorsInCircle(
-                                                                                bitmap,
-                                                                                centerX,
-                                                                                centerY,
-                                                                                calibrationRadius
-                                                                            )
-
-                                                                        // 使用完后立即回收副本
-                                                                        bitmap.recycle()
-
-                                                                        if (result != null) {
-                                                                            val (redColor, greenColor, blueColor) = result
-
-                                                                            // 显示找到的颜色详情
-                                                                            fun analyzeColor(
-                                                                                name: String,
-                                                                                color: Triple<Float, Float, Float>
-                                                                            ): String {
-                                                                                val (r, g, b) = color
-                                                                                val total = r + g + b
-                                                                                val rPct =
-                                                                                    (r / total * 100).toInt()
-                                                                                val gPct =
-                                                                                    (g / total * 100).toInt()
-                                                                                val bPct =
-                                                                                    (b / total * 100).toInt()
-                                                                                return "$name: RGB(${r.toInt()},${g.toInt()},${b.toInt()}) 占比:R${rPct}% G${gPct}% B${bPct}% 亮度:${total.toInt()}"
-                                                                            }
-
-                                                                            Log.d(
-                                                                                "Calibration",
-                                                                                "=== 校准结果 ==="
-                                                                            )
-                                                                            Log.d(
-                                                                                "Calibration",
-                                                                                analyzeColor(
-                                                                                    "?? 红色LED",
-                                                                                    redColor
-                                                                                )
-                                                                            )
-                                                                            Log.d(
-                                                                                "Calibration",
-                                                                                analyzeColor(
-                                                                                    "?? 绿色LED",
-                                                                                    greenColor
-                                                                                )
-                                                                            )
-                                                                            Log.d(
-                                                                                "Calibration",
-                                                                                analyzeColor(
-                                                                                    "?? 蓝色LED",
-                                                                                    blueColor
-                                                                                )
-                                                                            )
-
-                                                                            // 保存校准数据
-                                                                            calibrationData =
-                                                                                ColorCalibration(
-                                                                                    redColor,
-                                                                                    greenColor,
-                                                                                    blueColor
-                                                                                )
-                                                                            detector.setCalibration(
-                                                                                calibrationData
-                                                                            )
-                                                                            Log.d(
-                                                                                "Calibration",
-                                                                                "? 校准数据已保存，现在将使用这些颜色进行检测"
-                                                                            )
-
-                                                                            // 显示成功提示
-                                                                            val totalBrightness =
-                                                                                (redColor.first + redColor.second + redColor.third +
-                                                                                        greenColor.first + greenColor.second + greenColor.third +
-                                                                                        blueColor.first + blueColor.second + blueColor.third) / 3
-                                                                            android.widget.Toast.makeText(
-                                                                                context,
-                                                                                "? 校准成功！平均亮度: ${totalBrightness.toInt()}",
-                                                                                android.widget.Toast.LENGTH_SHORT
-                                                                            ).show()
-                                                                        } else {
-                                                                            // 搜索失败
-                                                                            Log.e(
-                                                                                "Calibration",
-                                                                                "? 未在圆框内找到有效的RGB颜色"
-                                                                            )
-
-                                                                            Toast.makeText(
-                                                                                context,
-                                                                                "校准失败！\n请确保RGB三色LED都在圆框内",
-                                                                                android.widget.Toast.LENGTH_LONG
-                                                                            ).show()
-
-                                                                            // 清除之前的校准数据
-                                                                            calibrationData = null
-                                                                            detector.setCalibration(null)
-                                                                        }
-                                                                    }
-                                                                }
-                                                            } catch (e: Exception) {
-                                                                e.printStackTrace()
-                                                                android.widget.Toast.makeText(
-                                                                    context,
-                                                                    "校准出错：${e.message}",
-                                                                    android.widget.Toast.LENGTH_LONG
-                                                                ).show()
-                                                            }
-                                                        }
-                                                        isCalibrating = !isCalibrating
-                                                    },
-                                                    modifier = Modifier.fillMaxSize(),
-                                                    contentPadding = PaddingValues(0.dp)
-                                                ) {
-                                                    Text(
-                                                        text = if (isCalibrating) "? 确认" else if (calibrationData != null) "? 已校准" else "校准",
-                                                        color = Color.White,
-                                                        style = MaterialTheme.typography.labelMedium
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    // PnP距离设置（三色模式）
-                                    if (targetSpotCount == 3) {
-                                        HorizontalDivider(
-                                            modifier = Modifier.padding(vertical = 4.dp),
-                                            thickness = DividerDefaults.Thickness,
-                                            color = FlatUiColors.Border
-                                        )
-                                        Text(
-                                            text = "△ EDGE LENGTH",
-                                            color = FlatUiColors.TextMuted,
-                                            style = MaterialTheme.typography.labelSmall
-                                        )
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            IconButton(
-                                                onClick = {
-                                                    haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
-                                                    if (tuning.knownTriangleEdgeLengthMm > 10f) {
-                                                        tuning = tuning.copy(
-                                                            knownTriangleEdgeLengthMm = tuning.knownTriangleEdgeLengthMm - 10f
-                                                        )
-                                                    }
-                                                },
-                                                modifier = Modifier.size(40.dp)
-                                            ) {
-                                                Text(
-                                                    "-",
-                                                    style = MaterialTheme.typography.headlineMedium,
-                                                    color = FlatUiColors.TextPrimary
-                                                )
-                                            }
-                                            Column(
-                                                horizontalAlignment = Alignment.CenterHorizontally,
-                                                modifier = Modifier.weight(1f)
-                                            ) {
-                                                Text(
-                                                    text = "%.0f".format(tuning.knownTriangleEdgeLengthMm),
-                                                    color = FlatUiColors.Accent,
-                                                    style = MaterialTheme.typography.headlineMedium
-                                                )
-                                                Text(
-                                                    text = "mm",
-                                                    color = FlatUiColors.TextMuted,
-                                                    style = MaterialTheme.typography.labelSmall
-                                                )
-                                            }
-                                            IconButton(
-                                                onClick = {
-                                                    haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
-                                                    tuning = tuning.copy(
-                                                        knownTriangleEdgeLengthMm = tuning.knownTriangleEdgeLengthMm + 10f
-                                                    )
-                                                },
-                                                modifier = Modifier.size(40.dp)
-                                            ) {
-                                                Text(
-                                                    "+",
-                                                    style = MaterialTheme.typography.headlineMedium,
-                                                    color = FlatUiColors.TextPrimary
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    HorizontalDivider(
-                                        modifier = Modifier.padding(vertical = 8.dp),
-                                        thickness = DividerDefaults.Thickness, color = FlatUiColors.Border
                                     )
 
-                                    // 状态信息部分
-                                    Column(
-                                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                                    ) {
-                                        // 状态信息标题
-                                        Text(
-                                            text = "STATUS",
-                                            color = FlatUiColors.TextMuted,
-                                            style = MaterialTheme.typography.labelSmall
-                                        )
-
-                                        // 检测状态
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                        ) {
-                                            Surface(
-                                                modifier = Modifier.size(12.dp),
-                                                shape = MaterialTheme.shapes.small,
-                                                color = if (detectedSpotsCount > 0) Color(0xFF2CA36B) else Color(
-                                                    0xFFCCCCCC
-                                                ),
-                                                shadowElevation = 0.dp
-                                            ) {}
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(
-                                                    text = "DETECTED",
-                                                    color = FlatUiColors.TextMuted,
-                                                    style = MaterialTheme.typography.labelSmall
-                                                )
-                                                Text(
-                                                    text = "$detectedSpotsCount / $targetSpotCount",
-                                                    color = if (detectedSpotsCount == targetSpotCount) Color(
-                                                        0xFF4CAF50
-                                                    ) else Color(0xFFF0A229),
-                                                    style = MaterialTheme.typography.titleLarge
-                                                )
-                                            }
-                                        }
-
-                                        // 网格和区块信息（横向排列）
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            Column {
-                                                Text(
-                                                    text = "GRID",
-                                                    color = FlatUiColors.TextMuted,
-                                                    style = MaterialTheme.typography.labelSmall
-                                                )
-                                                Text(
-                                                    text = "${tuning.gridSize}×${tuning.gridSize}",
-                                                    color = FlatUiColors.TextPrimary,
-                                                    style = MaterialTheme.typography.titleMedium
-                                                )
-                                            }
-
-                                            Column(horizontalAlignment = Alignment.End) {
-                                                Text(
-                                                    text = "BLOCKS",
-                                                    color = FlatUiColors.TextMuted,
-                                                    style = MaterialTheme.typography.labelSmall
-                                                )
-                                                Text(
-                                                    text = "${tuning.gridSize * tuning.gridSize}",
-                                                    color = FlatUiColors.TextPrimary,
-                                                    style = MaterialTheme.typography.titleMedium
-                                                )
-                                            }
-                                        }
-
-                                        // 帧率显示
-                                        Column {
-                                            Text(
-                                                text = "FPS",
-                                                color = FlatUiColors.TextMuted,
-                                                style = MaterialTheme.typography.labelSmall
-                                            )
-                                            Text(
-                                                text = "%.1f".format(fps),
-                                                color = if (fps > 20f) Color(0xFF2CA36B) else if (fps > 10f) Color(
-                                                    0xFFFF9800
-                                                ) else Color(0xFFE35D5B),
-                                                style = MaterialTheme.typography.titleLarge
-                                            )
-                                        }
-
-                                        // PnP结果显示（三色模式）
-                                        if (pnpResult != null) {
-                                            HorizontalDivider(
-                                                modifier = Modifier.padding(vertical = 12.dp),
-                                                thickness = DividerDefaults.Thickness,
-                                                color = FlatUiColors.Border
-                                            )
-
-                                            // 距离、方位角、仰角（横向排列）
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween
-                                            ) {
-                                                Column {
-                                                    Text(
-                                                        text = "DISTANCE",
-                                                        color = FlatUiColors.TextMuted,
-                                                        style = MaterialTheme.typography.labelSmall
-                                                    )
-                                                    Text(
-                                                        text = pnpCalculator.formatDistance(pnpResult!!.distance),
-                                                        color = FlatUiColors.Accent,
-                                                        style = MaterialTheme.typography.titleMedium
-                                                    )
-                                                }
-
-                                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                    Text(
-                                                        text = "AZIMUTH",
-                                                        color = FlatUiColors.TextMuted,
-                                                        style = MaterialTheme.typography.labelSmall
-                                                    )
-                                                    Text(
-                                                        text = pnpCalculator.formatAngle(pnpResult!!.azimuth),
-                                                        color = FlatUiColors.TextPrimary,
-                                                        style = MaterialTheme.typography.titleMedium
-                                                    )
-                                                }
-
-                                                Column(horizontalAlignment = Alignment.End) {
-                                                    Text(
-                                                        text = "ELEVATION",
-                                                        color = FlatUiColors.TextMuted,
-                                                        style = MaterialTheme.typography.labelSmall
-                                                    )
-                                                    Text(
-                                                        text = pnpCalculator.formatAngle(pnpResult!!.elevation),
-                                                        color = FlatUiColors.TextPrimary,
-                                                        style = MaterialTheme.typography.titleMedium
-                                                    )
-                                                }
-                                            }
-
-                                            HorizontalDivider(
-                                                modifier = Modifier.padding(vertical = 8.dp),
-                                                thickness = DividerDefaults.Thickness,
-                                                color = FlatUiColors.Border
-                                            )
-
-                                            if (pnpResult!!.pose6DOF != null) {
-                                                // 3点模式：显示完整6DOF姿态
-                                                Column(
-                                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                                ) {
-                                                    Text(
-                                                        text = "6DOF POSE",
-                                                        color = FlatUiColors.Accent,
-                                                        style = MaterialTheme.typography.titleSmall
-                                                    )
-
-                                                    Column(
-                                                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                                                    ) {
-                                                        Row(
-                                                            modifier = Modifier.fillMaxWidth(),
-                                                            horizontalArrangement = Arrangement.SpaceBetween
-                                                        ) {
-                                                            Text(
-                                                                text = "CENTER",
-                                                                color = Color(0xFF95A5A6),
-                                                                style = MaterialTheme.typography.labelSmall
-                                                            )
-                                                            Text(
-                                                                text = pnpCalculator.formatPoint3D(
-                                                                    pnpResult!!.pose6DOF!!.position
-                                                                ),
-                                                                color = FlatUiColors.Accent,
-                                                                style = MaterialTheme.typography.bodySmall
-                                                            )
-                                                        }
-                                                    }
-
-                                                    HorizontalDivider(
-                                                        modifier = Modifier.padding(vertical = 4.dp),
-                                                        thickness = DividerDefaults.Thickness,
-                                                        color = FlatUiColors.Border
-                                                    )
-
-                                                    Text(
-                                                        text = "ORIENTATION",
-                                                        color = FlatUiColors.TextMuted,
-                                                        style = MaterialTheme.typography.labelSmall
-                                                    )
-
-                                                    Row(
-                                                        modifier = Modifier.fillMaxWidth(),
-                                                        horizontalArrangement = Arrangement.SpaceBetween
-                                                    ) {
-                                                        Column {
-                                                            Text(
-                                                                text = "ROLL",
-                                                                color = FlatUiColors.TextMuted,
-                                                                style = MaterialTheme.typography.labelSmall
-                                                            )
-                                                            Text(
-                                                                text = pnpCalculator.formatAngle(
-                                                                    pnpResult!!.pose6DOF!!.roll
-                                                                ),
-                                                                color = Color(0xFFE35D5B),
-                                                                style = MaterialTheme.typography.bodyMedium
-                                                            )
-                                                        }
-
-                                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                            Text(
-                                                                text = "PITCH",
-                                                                color = FlatUiColors.TextMuted,
-                                                                style = MaterialTheme.typography.labelSmall
-                                                            )
-                                                            Text(
-                                                                text = pnpCalculator.formatAngle(
-                                                                    pnpResult!!.pose6DOF!!.pitch
-                                                                ),
-                                                                color = Color(0xFF2CA36B),
-                                                                style = MaterialTheme.typography.bodyMedium
-                                                            )
-                                                        }
-
-                                                        Column(horizontalAlignment = Alignment.End) {
-                                                            Text(
-                                                                text = "YAW",
-                                                                color = FlatUiColors.TextMuted,
-                                                                style = MaterialTheme.typography.labelSmall
-                                                            )
-                                                            Text(
-                                                                text = pnpCalculator.formatAngle(
-                                                                    pnpResult!!.pose6DOF!!.yaw
-                                                                ),
-                                                                color = Color(0xFF2F8FCE),
-                                                                style = MaterialTheme.typography.bodyMedium
-                                                            )
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
+                                    StatusSection(
+                                        detectedSpotsCount = detectedSpotsCount,
+                                        targetSpotCount = targetSpotCount,
+                                        tuning = tuning,
+                                        fps = fps,
+                                        pnpResult = pnpResult,
+                                        pnpCalculator = pnpCalculator
+                                    )
                                 }
                             }
 
@@ -1159,6 +446,568 @@ fun BrightSpotDetectionApp(
     }
 }
 
+private fun executeCalibration(
+    context: android.content.Context,
+    detector: BrightSpotDetector,
+    calibrationBitmap: android.graphics.Bitmap?
+): ColorCalibration? {
+    if (calibrationBitmap == null || calibrationBitmap.isRecycled) {
+        Toast.makeText(context, "校准失败：未获取到有效画面", Toast.LENGTH_SHORT).show()
+        detector.setCalibration(null)
+        return null
+    }
+
+    return try {
+        when (val result = runAutomaticCalibration(detector, calibrationBitmap)) {
+            is CalibrationRunResult.Success -> {
+                detector.setCalibration(result.calibration)
+                Toast.makeText(
+                    context,
+                    "校准成功！平均亮度: ${result.averageBrightness}",
+                    Toast.LENGTH_SHORT
+                ).show()
+                result.calibration
+            }
+
+            CalibrationRunResult.NoValidColorsFound -> {
+                Toast.makeText(
+                    context,
+                    "校准失败！\n请确保RGB三色LED都在圆框内",
+                    Toast.LENGTH_LONG
+                ).show()
+                detector.setCalibration(null)
+                null
+            }
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+        Toast.makeText(
+            context,
+            "校准出错：${e.message}",
+            Toast.LENGTH_LONG
+        ).show()
+        detector.setCalibration(null)
+        null
+    }
+}
+
+@Composable
+private fun DetectionControlSection(
+    tuning: AppTuningSettings,
+    onTuningChange: (AppTuningSettings) -> Unit,
+    lastGridSizeHapticStep: Int,
+    onGridHapticStepChange: (Int) -> Unit,
+    gridSliderInteractionSource: MutableInteractionSource,
+    targetSpotCount: Int,
+    calibrationData: ColorCalibration?,
+    isCalibrating: Boolean,
+    onClearCalibration: () -> Unit,
+    onCalibrationAction: () -> Unit
+) {
+    val haptic = LocalHapticFeedback.current
+
+    Text(
+        text = "PRECISION",
+        color = FlatUiColors.TextMuted,
+        style = MaterialTheme.typography.labelSmall,
+        modifier = Modifier.padding(top = 4.dp)
+    )
+    Column(
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "${tuning.gridSize}×${tuning.gridSize}",
+                color = FlatUiColors.Accent,
+                style = MaterialTheme.typography.titleMedium
+            )
+            Text(
+                text = "${tuning.gridSize * tuning.gridSize}",
+                color = FlatUiColors.TextMuted,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+        Slider(
+            value = tuning.gridSize.toFloat(),
+            onValueChange = { value ->
+                val rounded = kotlin.math.round(value / 8f).toInt() * 8
+                val newGridSize = rounded.coerceIn(32, 512)
+                if (newGridSize != lastGridSizeHapticStep) {
+                    haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                    onGridHapticStepChange(newGridSize)
+                }
+                onTuningChange(tuning.copy(gridSize = newGridSize))
+            },
+            onValueChangeFinished = {
+                haptic.performHapticFeedback(HapticFeedbackType.GestureEnd)
+            },
+            valueRange = 32f..512f,
+            steps = ((512 - 32) / 32 - 1),
+            interactionSource = gridSliderInteractionSource,
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+
+    Text(
+        text = "EXPOSURE",
+        color = FlatUiColors.TextMuted,
+        style = MaterialTheme.typography.labelSmall,
+        modifier = Modifier.padding(top = 4.dp)
+    )
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(80.dp),
+        shape = MaterialTheme.shapes.small,
+        color = FlatUiColors.Panel
+    ) {
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                    if (tuning.exposureCompensation > -6) {
+                        onTuningChange(
+                            tuning.copy(exposureCompensation = tuning.exposureCompensation - 1)
+                        )
+                    }
+                }
+            ) {
+                Text(
+                    "-",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = FlatUiColors.TextPrimary
+                )
+            }
+            Text(
+                text = if (tuning.exposureCompensation > 0) "+${tuning.exposureCompensation}" else "${tuning.exposureCompensation}",
+                color = FlatUiColors.Accent,
+                style = MaterialTheme.typography.headlineLarge
+            )
+            IconButton(
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                    if (tuning.exposureCompensation < 6) {
+                        onTuningChange(
+                            tuning.copy(exposureCompensation = tuning.exposureCompensation + 1)
+                        )
+                    }
+                }
+            ) {
+                Text(
+                    "+",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = FlatUiColors.TextPrimary
+                )
+            }
+        }
+    }
+
+    if (targetSpotCount == 3) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "ROI OPTIMIZATION",
+                color = FlatUiColors.TextMuted,
+                style = MaterialTheme.typography.labelSmall
+            )
+            Surface(
+                modifier = Modifier
+                    .height(36.dp)
+                    .width(64.dp),
+                shape = MaterialTheme.shapes.small,
+                color = if (tuning.enableRoiOptimization) Color(0xFF2CA36B) else Color(0xFFCCCCCC),
+                shadowElevation = 0.dp
+            ) {
+                TextButton(
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                        onTuningChange(tuning.copy(enableRoiOptimization = !tuning.enableRoiOptimization))
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    Text(
+                        text = if (tuning.enableRoiOptimization) "ON" else "OFF",
+                        color = if (tuning.enableRoiOptimization) Color.White else Color(0xFF666666),
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+            }
+        }
+
+        HorizontalDivider(
+            modifier = Modifier.padding(vertical = 4.dp),
+            thickness = DividerDefaults.Thickness,
+            color = FlatUiColors.Border
+        )
+        Text(
+            text = "CALIBRATION",
+            color = FlatUiColors.TextMuted,
+            style = MaterialTheme.typography.labelSmall
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (calibrationData != null && !isCalibrating) {
+                Surface(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(40.dp),
+                    shape = MaterialTheme.shapes.small,
+                    color = Color(0xFFE35D5B),
+                    shadowElevation = 0.dp
+                ) {
+                    TextButton(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                            onClearCalibration()
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
+                        Text(
+                            text = "? 清除",
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                    }
+                }
+            }
+
+            CalibrationActionButton(
+                isCalibrating = isCalibrating,
+                hasCalibrationData = calibrationData != null,
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                    onCalibrationAction()
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(40.dp)
+            )
+        }
+    }
+
+    if (targetSpotCount == 3) {
+        HorizontalDivider(
+            modifier = Modifier.padding(vertical = 4.dp),
+            thickness = DividerDefaults.Thickness,
+            color = FlatUiColors.Border
+        )
+        Text(
+            text = "△ EDGE LENGTH",
+            color = FlatUiColors.TextMuted,
+            style = MaterialTheme.typography.labelSmall
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                    if (tuning.knownTriangleEdgeLengthMm > 10f) {
+                        onTuningChange(
+                            tuning.copy(knownTriangleEdgeLengthMm = tuning.knownTriangleEdgeLengthMm - 10f)
+                        )
+                    }
+                },
+                modifier = Modifier.size(40.dp)
+            ) {
+                Text(
+                    "-",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = FlatUiColors.TextPrimary
+                )
+            }
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = "%.0f".format(tuning.knownTriangleEdgeLengthMm),
+                    color = FlatUiColors.Accent,
+                    style = MaterialTheme.typography.headlineMedium
+                )
+                Text(
+                    text = "mm",
+                    color = FlatUiColors.TextMuted,
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+            IconButton(
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                    onTuningChange(
+                        tuning.copy(knownTriangleEdgeLengthMm = tuning.knownTriangleEdgeLengthMm + 10f)
+                    )
+                },
+                modifier = Modifier.size(40.dp)
+            ) {
+                Text(
+                    "+",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = FlatUiColors.TextPrimary
+                )
+            }
+        }
+    }
+
+    HorizontalDivider(
+        modifier = Modifier.padding(vertical = 8.dp),
+        thickness = DividerDefaults.Thickness,
+        color = FlatUiColors.Border
+    )
+}
+
+@Composable
+private fun StatusSection(
+    detectedSpotsCount: Int,
+    targetSpotCount: Int,
+    tuning: AppTuningSettings,
+    fps: Float,
+    pnpResult: PnPDistanceCalculator.PnPResult?,
+    pnpCalculator: PnPDistanceCalculator
+) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text(
+            text = "STATUS",
+            color = FlatUiColors.TextMuted,
+            style = MaterialTheme.typography.labelSmall
+        )
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Surface(
+                modifier = Modifier.size(12.dp),
+                shape = MaterialTheme.shapes.small,
+                color = if (detectedSpotsCount > 0) Color(0xFF2CA36B) else Color(0xFFCCCCCC),
+                shadowElevation = 0.dp
+            ) {}
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "DETECTED",
+                    color = FlatUiColors.TextMuted,
+                    style = MaterialTheme.typography.labelSmall
+                )
+                Text(
+                    text = "$detectedSpotsCount / $targetSpotCount",
+                    color = if (detectedSpotsCount == targetSpotCount) Color(0xFF4CAF50) else Color(0xFFF0A229),
+                    style = MaterialTheme.typography.titleLarge
+                )
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column {
+                Text(
+                    text = "GRID",
+                    color = FlatUiColors.TextMuted,
+                    style = MaterialTheme.typography.labelSmall
+                )
+                Text(
+                    text = "${tuning.gridSize}×${tuning.gridSize}",
+                    color = FlatUiColors.TextPrimary,
+                    style = MaterialTheme.typography.titleMedium
+                )
+            }
+
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = "BLOCKS",
+                    color = FlatUiColors.TextMuted,
+                    style = MaterialTheme.typography.labelSmall
+                )
+                Text(
+                    text = "${tuning.gridSize * tuning.gridSize}",
+                    color = FlatUiColors.TextPrimary,
+                    style = MaterialTheme.typography.titleMedium
+                )
+            }
+        }
+
+        Column {
+            Text(
+                text = "FPS",
+                color = FlatUiColors.TextMuted,
+                style = MaterialTheme.typography.labelSmall
+            )
+            Text(
+                text = "%.1f".format(fps),
+                color = if (fps > 20f) Color(0xFF2CA36B) else if (fps > 10f) Color(0xFFFF9800) else Color(0xFFE35D5B),
+                style = MaterialTheme.typography.titleLarge
+            )
+        }
+
+        pnpResult?.let { result ->
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 12.dp),
+                thickness = DividerDefaults.Thickness,
+                color = FlatUiColors.Border
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column {
+                    Text(
+                        text = "DISTANCE",
+                        color = FlatUiColors.TextMuted,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                    Text(
+                        text = pnpCalculator.formatDistance(result.distance),
+                        color = FlatUiColors.Accent,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                }
+
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "AZIMUTH",
+                        color = FlatUiColors.TextMuted,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                    Text(
+                        text = pnpCalculator.formatAngle(result.azimuth),
+                        color = FlatUiColors.TextPrimary,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                }
+
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = "ELEVATION",
+                        color = FlatUiColors.TextMuted,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                    Text(
+                        text = pnpCalculator.formatAngle(result.elevation),
+                        color = FlatUiColors.TextPrimary,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                }
+            }
+
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 8.dp),
+                thickness = DividerDefaults.Thickness,
+                color = FlatUiColors.Border
+            )
+
+            result.pose6DOF?.let { pose ->
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "6DOF POSE",
+                        color = FlatUiColors.Accent,
+                        style = MaterialTheme.typography.titleSmall
+                    )
+
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "CENTER",
+                                color = Color(0xFF95A5A6),
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                            Text(
+                                text = pnpCalculator.formatPoint3D(pose.position),
+                                color = FlatUiColors.Accent,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 4.dp),
+                        thickness = DividerDefaults.Thickness,
+                        color = FlatUiColors.Border
+                    )
+
+                    Text(
+                        text = "ORIENTATION",
+                        color = FlatUiColors.TextMuted,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text(
+                                text = "ROLL",
+                                color = FlatUiColors.TextMuted,
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                            Text(
+                                text = pnpCalculator.formatAngle(pose.roll),
+                                color = Color(0xFFE35D5B),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "PITCH",
+                                color = FlatUiColors.TextMuted,
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                            Text(
+                                text = pnpCalculator.formatAngle(pose.pitch),
+                                color = Color(0xFF2CA36B),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                text = "YAW",
+                                color = FlatUiColors.TextMuted,
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                            Text(
+                                text = pnpCalculator.formatAngle(pose.yaw),
+                                color = Color(0xFF2F8FCE),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun SettingsScreen(
     onDismiss: () -> Unit,
@@ -1177,8 +1026,7 @@ fun SettingsScreen(
     ) {
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(20.dp),
+                .fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
             Row(

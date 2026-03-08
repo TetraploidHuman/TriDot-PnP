@@ -1701,6 +1701,22 @@ private fun FloatSliderSetting(
     steps: Int,
     onValueChange: (Float) -> Unit
 ) {
+    val haptic = LocalHapticFeedback.current
+    val bucketCount = (steps + 1).coerceAtLeast(1)
+    fun bucketIndexOf(current: Float): Int {
+        val start = range.start
+        val end = range.endInclusive
+        val normalized = if (end > start) {
+            ((current - start) / (end - start)).coerceIn(0f, 1f)
+        } else {
+            0f
+        }
+        return kotlin.math.round(normalized * bucketCount).toInt().coerceIn(0, bucketCount)
+    }
+    var lastBucketIndex by remember(title, range.start, range.endInclusive, steps) {
+        mutableIntStateOf(bucketIndexOf(value))
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1713,7 +1729,18 @@ private fun FloatSliderSetting(
         Text(description, color = FlatUiColors.TextMuted, style = MaterialTheme.typography.bodySmall)
         Slider(
             value = value.coerceIn(range.start, range.endInclusive),
-            onValueChange = onValueChange,
+            onValueChange = { nextValue ->
+                val nextBucketIndex = bucketIndexOf(nextValue)
+                if (nextBucketIndex != lastBucketIndex) {
+                    haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                    lastBucketIndex = nextBucketIndex
+                }
+                onValueChange(nextValue)
+            },
+            onValueChangeFinished = {
+                lastBucketIndex = bucketIndexOf(value)
+                haptic.performHapticFeedback(HapticFeedbackType.GestureEnd)
+            },
             valueRange = range,
             steps = steps
         )
@@ -1757,6 +1784,7 @@ private fun BooleanSettingRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
+    val haptic = LocalHapticFeedback.current
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1768,8 +1796,22 @@ private fun BooleanSettingRow(
                 Text(description, color = FlatUiColors.TextMuted, style = MaterialTheme.typography.bodySmall)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ThemeModeButton(label = "关", selected = !checked, onClick = { onCheckedChange(false) })
-                ThemeModeButton(label = "开", selected = checked, onClick = { onCheckedChange(true) })
+                ThemeModeButton(
+                    label = "关",
+                    selected = !checked,
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                        onCheckedChange(false)
+                    }
+                )
+                ThemeModeButton(
+                    label = "开",
+                    selected = checked,
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                        onCheckedChange(true)
+                    }
+                )
             }
         }
     }

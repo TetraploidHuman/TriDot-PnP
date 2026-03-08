@@ -185,7 +185,7 @@ class BrightSpotDetector {
         roiTop: Int? = null,
         roiRight: Int? = null,
         roiBottom: Int? = null,
-        probabilityMatrix: ProbabilityMatrix128x96? = null
+        probabilityMatrix: ProbabilityMatrix32x24? = null
     ): List<BrightSpot> {
 
         val width = bitmap.width

@@ -6,10 +6,12 @@ import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -90,14 +92,20 @@ fun BrightSpotDetectionApp(
     val targetSpotCount = 3
     var exposureCompensation by remember { mutableIntStateOf(0) } // 曝光补偿，0为默认值
     var gridSize by remember { mutableIntStateOf(256) } // 检测网格大小，默认50x50
-    var probabilityMatrix by remember { mutableStateOf(buildManualProbabilityMatrix128x96()) }
+    var probabilityMatrix by remember { mutableStateOf(buildManualProbabilityMatrix32x24()) }
     var knownDistance by remember { mutableFloatStateOf(100f) } // 已知的两点距离（毫米）
     var pnpResult by remember { mutableStateOf<PnPDistanceCalculator.PnPResult?>(null) }
     var imageSize by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var fps by remember { mutableFloatStateOf(0f) } // 识别帧率
     var enableRoiOptimization by remember { mutableStateOf(true) } // ROI优化开关，默认启用
     var showSettings by remember { mutableStateOf(false) } // 设置页面显示状态
+    var isProbabilityEditMode by remember { mutableStateOf(false) }
+    var probabilityEditMode by remember { mutableStateOf(ProbabilityEditMode.Decrease) }
+    var probabilityEditStep by remember { mutableFloatStateOf(0.2f) }
+    var selectedProbabilityCell by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var lastGridSizeHapticStep by remember { mutableIntStateOf(gridSize) }
+    val gridSliderInteractionSource = remember { MutableInteractionSource() }
+    val isGridSliderDragged by gridSliderInteractionSource.collectIsDraggedAsState()
 
     // 颜色校准相关
     var isCalibrating by remember { mutableStateOf(false) }
@@ -137,7 +145,17 @@ fun BrightSpotDetectionApp(
                                 modifier = Modifier.fillMaxSize(),
                                 exposureCompensation = exposureCompensation,
                                 gridSize = gridSize,
+                                isGridSizeAdjusting = isGridSliderDragged,
                                 probabilityMatrix = probabilityMatrix,
+                                probabilityEditEnabled = isProbabilityEditMode,
+                                probabilityEditMode = probabilityEditMode,
+                                probabilityEditStep = probabilityEditStep,
+                                onProbabilityMatrixChange = {
+                                    probabilityMatrix = it
+                                },
+                                onProbabilityCellSelected = { cell ->
+                                    selectedProbabilityCell = cell
+                                },
                                 detector = detector,  // 传递detector实例
                                 enableRoiOptimization = enableRoiOptimization,
                                 onFpsUpdate = { newFps ->
@@ -293,6 +311,76 @@ fun BrightSpotDetectionApp(
                                     .padding(top = 52.dp),
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
+                                if (isProbabilityEditMode) {
+                                    FlatPanel {
+                                        Text(
+                                            text = "概率矩阵编辑中",
+                                            color = FlatUiColors.TextPrimary,
+                                            style = MaterialTheme.typography.titleMedium
+                                        )
+                                        Text(
+                                            text = "直接在左侧摄像头画面的网格上点击或拖动即可编辑。",
+                                            color = FlatUiColors.TextSecondary,
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                        selectedProbabilityCell?.let { (row, col) ->
+                                            Text(
+                                                text = "当前格: 行 ${row + 1}, 列 ${col + 1}, 值 ${"%.2f".format(probabilityMatrix.weightAt(row, col))}",
+                                                color = FlatUiColors.TextMuted,
+                                                style = MaterialTheme.typography.bodySmall
+                                            )
+                                        }
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                        ) {
+                                            ThemeModeButton(
+                                                label = "增加",
+                                                selected = probabilityEditMode == ProbabilityEditMode.Increase,
+                                                onClick = {
+                                                    haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                                                    probabilityEditMode = ProbabilityEditMode.Increase
+                                                },
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            ThemeModeButton(
+                                                label = "减少",
+                                                selected = probabilityEditMode == ProbabilityEditMode.Decrease,
+                                                onClick = {
+                                                    haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                                                    probabilityEditMode = ProbabilityEditMode.Decrease
+                                                },
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                        }
+                                        Text(
+                                            text = "每次调整 ${"%.2f".format(probabilityEditStep)}",
+                                            color = FlatUiColors.Accent,
+                                            style = MaterialTheme.typography.titleSmall
+                                        )
+                                        Slider(
+                                            value = probabilityEditStep,
+                                            onValueChange = { probabilityEditStep = it },
+                                            valueRange = 0.05f..1.0f,
+                                            steps = 18
+                                        )
+                                        Button(
+                                            onClick = {
+                                                haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                                                isProbabilityEditMode = false
+                                            },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = FlatUiColors.Accent,
+                                                contentColor = FlatUiColors.TextOnAccent
+                                            ),
+                                            shape = FlatUiShapes.Control,
+                                            elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp)
+                                        ) {
+                                            Text("退出编辑模式")
+                                        }
+                                    }
+                                }
                                 // 控制面板内容
                                 Column(
                                     verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -338,7 +426,8 @@ fun BrightSpotDetectionApp(
                                                 haptic.performHapticFeedback(HapticFeedbackType.GestureEnd)
                                             },
                                             valueRange = 32f..512f,
-                                            steps = ((512 - 32) / 8 - 1),
+                                            steps = ((512 - 32) / 32 - 1),
+                                            interactionSource = gridSliderInteractionSource,
                                             modifier = Modifier.fillMaxWidth()
                                         )
                                     }
@@ -978,33 +1067,37 @@ fun BrightSpotDetectionApp(
                                     }
                                 }
                             }
+
+                            androidx.compose.animation.AnimatedVisibility(
+                                visible = showSettings,
+                                enter = slideInHorizontally(
+                                    animationSpec = tween(durationMillis = 260),
+                                    initialOffsetX = { fullWidth -> fullWidth }
+                                ) + fadeIn(animationSpec = tween(durationMillis = 220)),
+                                exit = slideOutHorizontally(
+                                    animationSpec = tween(durationMillis = 220),
+                                    targetOffsetX = { fullWidth -> fullWidth }
+                                ) + fadeOut(animationSpec = tween(durationMillis = 180)),
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .zIndex(20f)
+                            ) {
+                                SettingsScreen(
+                                    onDismiss = { showSettings = false },
+                                    themeMode = themeMode,
+                                    onThemeModeChange = onThemeModeChange,
+                                    probabilityMatrix = probabilityMatrix,
+                                    onProbabilityMatrixEditRequest = {
+                                        selectedProbabilityCell = null
+                                        isProbabilityEditMode = true
+                                        showSettings = false
+                                    },
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
                             }
                         }
                     }
-
-
-                // 设置页面（全屏覆盖，带过渡动画）
-                AnimatedVisibility(
-                    visible = showSettings,
-                    enter = fadeIn(animationSpec = tween(durationMillis = 220)) +
-                            scaleIn(
-                                animationSpec = tween(durationMillis = 240),
-                                initialScale = 0.96f
-                            ),
-                    exit = fadeOut(animationSpec = tween(durationMillis = 180)) +
-                            scaleOut(
-                                animationSpec = tween(durationMillis = 180),
-                                targetScale = 0.98f
-                            ),
-                    modifier = Modifier.zIndex(20f)
-                ) {
-                    SettingsScreen(
-                        onDismiss = { showSettings = false },
-                        themeMode = themeMode,
-                        onThemeModeChange = onThemeModeChange,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
             }
             cameraPermissionState.status.shouldShowRationale -> {
                 // 需要向用户解释为什么需要相机权限
@@ -1027,19 +1120,21 @@ fun SettingsScreen(
     onDismiss: () -> Unit,
     themeMode: ThemeMode,
     onThemeModeChange: (ThemeMode) -> Unit,
+    probabilityMatrix: ProbabilityMatrix32x24,
+    onProbabilityMatrixEditRequest: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val haptic = LocalHapticFeedback.current
     Surface(
         modifier = modifier.fillMaxSize(),
-        color = FlatUiColors.AppBackground
+        color = FlatUiColors.SidebarBackground
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp)
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            // 顶部栏
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1065,59 +1160,118 @@ fun SettingsScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(32.dp))
-
-            FlatPanel {
-                Text(
-                    text = "设置选项",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = FlatUiColors.TextPrimary,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-
-                Text(
-                    text = "界面已切换为扁平化风格。后续设置项建议继续沿用统一的浅底色板、低对比边框和无阴影按钮。",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = FlatUiColors.TextSecondary
-                )
-
-                HorizontalDivider(
-                    thickness = DividerDefaults.Thickness,
-                    color = FlatUiColors.Border
-                )
-
-                Text(
-                    text = "主题模式",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = FlatUiColors.TextPrimary
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    ThemeModeButton(
-                        label = "明亮",
-                        selected = themeMode == ThemeMode.Light,
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
-                            onThemeModeChange(ThemeMode.Light)
-                        },
-                        modifier = Modifier.weight(1f)
-                    )
-                    ThemeModeButton(
-                        label = "暗黑",
-                        selected = themeMode == ThemeMode.Dark,
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
-                            onThemeModeChange(ThemeMode.Dark)
-                        },
-                        modifier = Modifier.weight(1f)
-                    )
+            SettingsOverviewContent(
+                themeMode = themeMode,
+                probabilityMatrix = probabilityMatrix,
+                onThemeModeChange = onThemeModeChange,
+                onOpenProbabilityEditor = {
+                    haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                    onProbabilityMatrixEditRequest()
                 }
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingsOverviewContent(
+    themeMode: ThemeMode,
+    probabilityMatrix: ProbabilityMatrix32x24,
+    onThemeModeChange: (ThemeMode) -> Unit,
+    onOpenProbabilityEditor: () -> Unit
+) {
+    val haptic = LocalHapticFeedback.current
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        FlatPanel {
+            Text(
+                text = "设置选项",
+                style = MaterialTheme.typography.titleLarge,
+                color = FlatUiColors.TextPrimary,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            Text(
+                text = "界面已切换为扁平化风格。后续设置项建议继续沿用统一的浅底色板、低对比边框和无阴影按钮。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = FlatUiColors.TextSecondary
+            )
+
+            HorizontalDivider(
+                thickness = DividerDefaults.Thickness,
+                color = FlatUiColors.Border
+            )
+
+            Text(
+                text = "主题模式",
+                style = MaterialTheme.typography.titleMedium,
+                color = FlatUiColors.TextPrimary
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                ThemeModeButton(
+                    label = "明亮",
+                    selected = themeMode == ThemeMode.Light,
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                        onThemeModeChange(ThemeMode.Light)
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+                ThemeModeButton(
+                    label = "暗黑",
+                    selected = themeMode == ThemeMode.Dark,
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                        onThemeModeChange(ThemeMode.Dark)
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+
+        FlatPanel {
+            Text(
+                text = "概率矩阵",
+                style = MaterialTheme.typography.titleMedium,
+                color = FlatUiColors.TextPrimary
+            )
+            Text(
+                text = "进入编辑模式后，会直接在摄像头画面上显示 64×48 概率矩阵覆盖层，并可直接触摸编辑。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = FlatUiColors.TextSecondary
+            )
+            Text(
+                text = "当前中心值 ${"%.2f".format(probabilityMatrix.weightAt(ProbabilityMatrix32x24.ROWS / 2, ProbabilityMatrix32x24.COLS / 2))}",
+                style = MaterialTheme.typography.bodySmall,
+                color = FlatUiColors.TextMuted
+            )
+            Button(
+                onClick = onOpenProbabilityEditor,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = FlatUiColors.Accent,
+                    contentColor = FlatUiColors.TextOnAccent
+                ),
+                shape = FlatUiShapes.Control,
+                elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp)
+            ) {
+                Text("进入概率矩阵编辑模式")
             }
         }
     }
+}
+
+enum class ProbabilityEditMode {
+    Increase,
+    Decrease
 }
 
 @Composable
@@ -1208,8 +1362,8 @@ private object FlatUiColors {
 }
 
 private object FlatUiShapes {
-    val Panel = RoundedCornerShape(20.dp)
-    val Control = RoundedCornerShape(14.dp)
+    val Panel = RoundedCornerShape(4.dp)
+    val Control = RoundedCornerShape(4.dp)
 }
 
 @Composable

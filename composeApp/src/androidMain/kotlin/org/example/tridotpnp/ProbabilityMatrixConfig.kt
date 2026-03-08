@@ -1,17 +1,19 @@
 ﻿package org.example.tridotpnp
 
-data class ProbabilityMatrix128x96(
+data class ProbabilityMatrix32x24(
     val values: FloatArray
 ) {
     companion object {
-        const val ROWS = 128
-        const val COLS = 96
+        const val ROWS = 32
+        const val COLS = 24
         const val SIZE = ROWS * COLS
+        const val MIN_WEIGHT = 0.01f
+        const val MAX_WEIGHT = 1.5f
     }
 
     init {
         require(values.size == SIZE) {
-            "ProbabilityMatrix128x96 requires $SIZE values, got ${values.size}"
+            "ProbabilityMatrix32x24 requires $SIZE values, got ${values.size}"
         }
     }
 
@@ -26,7 +28,7 @@ data class ProbabilityMatrix128x96(
     fun weightAtGridCell(row: Int, col: Int, imageWidth: Int, imageHeight: Int): Float {
         val isLandscape = imageWidth > imageHeight
         val (mappedRow, mappedCol) = if (isLandscape) {
-            // 横屏下显示网格采用 96x128，底层矩阵做转置读取，保证绘制和检测一致。
+            // 横屏下显示网格采用 24x32，底层矩阵做转置读取，保证绘制和检测一致。
             col to row
         } else {
             row to col
@@ -44,10 +46,35 @@ data class ProbabilityMatrix128x96(
         val row = ((y.toFloat() / imageHeight) * rows).toInt().coerceIn(0, rows - 1)
         return weightAtGridCell(row, col, imageWidth, imageHeight)
     }
-}
 
-private const val MIN_PROBABILITY_WEIGHT = 0.01f
-private const val MAX_PROBABILITY_WEIGHT = 1.5f
+    fun weightAt(row: Int, col: Int): Float {
+        val safeRow = row.coerceIn(0, ROWS - 1)
+        val safeCol = col.coerceIn(0, COLS - 1)
+        return values[safeRow * COLS + safeCol]
+    }
+
+    fun updateCell(row: Int, col: Int, delta: Float): ProbabilityMatrix32x24 {
+        val safeRow = row.coerceIn(0, ROWS - 1)
+        val safeCol = col.coerceIn(0, COLS - 1)
+        val index = safeRow * COLS + safeCol
+        val nextValues = values.copyOf()
+        nextValues[index] = (nextValues[index] + delta).coerceIn(MIN_WEIGHT, MAX_WEIGHT)
+        return ProbabilityMatrix32x24(nextValues)
+    }
+
+    fun updateDisplayedCell(
+        row: Int,
+        col: Int,
+        imageWidth: Int,
+        imageHeight: Int,
+        delta: Float
+    ): ProbabilityMatrix32x24 {
+        val isLandscape = imageWidth > imageHeight
+        val mappedRow = if (isLandscape) col else row
+        val mappedCol = if (isLandscape) row else col
+        return updateCell(mappedRow, mappedCol, delta)
+    }
+}
 
 data class ProbabilityRegion(
     val rows: IntRange,
@@ -59,20 +86,18 @@ private fun region(rows: IntRange, cols: IntRange, weight: Float): ProbabilityRe
     return ProbabilityRegion(rows = rows, cols = cols, weight = weight)
 }
 
-fun buildManualProbabilityMatrix128x96(): ProbabilityMatrix128x96 {
-    val rows = ProbabilityMatrix128x96.ROWS
-    val cols = ProbabilityMatrix128x96.COLS
+fun buildManualProbabilityMatrix32x24(): ProbabilityMatrix32x24 {
+    val rows = ProbabilityMatrix32x24.ROWS
+    val cols = ProbabilityMatrix32x24.COLS
 
-    val values = FloatArray(ProbabilityMatrix128x96.SIZE) { 0f }
+    val values = FloatArray(ProbabilityMatrix32x24.SIZE) { 0f }
 
     val manualRegions = listOf(
         // 1) 全局基础概率（使用 region 覆盖）
         region(rows = 0 until rows, cols = 0 until cols, weight = 0.4f),
         // 2) 局部高/低概率区域继续覆盖
-        region(rows = 44..84, cols = 28..67, weight = 0.60f),
-        region(rows = 50..78, cols = 34..61, weight = 0.80f),
-        region(rows = 0..18, cols = 0..95, weight = 0.4f),
-        region(rows = 108..127, cols = 0..95, weight = 0.4f)
+
+        region(rows = 12..12, cols = 16..16, weight = 0.9f)
     )
 
     manualRegions.forEach { region ->
@@ -80,7 +105,10 @@ fun buildManualProbabilityMatrix128x96(): ProbabilityMatrix128x96 {
         val rEnd = region.rows.last.coerceIn(rStart, rows - 1)
         val cStart = region.cols.first.coerceIn(0, cols - 1)
         val cEnd = region.cols.last.coerceIn(cStart, cols - 1)
-        val w = region.weight.coerceIn(MIN_PROBABILITY_WEIGHT, MAX_PROBABILITY_WEIGHT)
+        val w = region.weight.coerceIn(
+            ProbabilityMatrix32x24.MIN_WEIGHT,
+            ProbabilityMatrix32x24.MAX_WEIGHT
+        )
 
         for (r in rStart..rEnd) {
             val base = r * cols
@@ -90,5 +118,5 @@ fun buildManualProbabilityMatrix128x96(): ProbabilityMatrix128x96 {
         }
     }
 
-    return ProbabilityMatrix128x96(values)
+    return ProbabilityMatrix32x24(values)
 }

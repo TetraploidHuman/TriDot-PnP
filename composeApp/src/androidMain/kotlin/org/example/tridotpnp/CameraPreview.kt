@@ -4,6 +4,10 @@ import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CaptureRequest
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import android.view.MotionEvent
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -21,9 +25,15 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.material3.Text
@@ -35,13 +45,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
-import android.os.Handler
-import android.os.Looper
-import android.util.Log
 import androidx.annotation.OptIn
 import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2CameraInfo
@@ -54,6 +62,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import androidx.core.graphics.scale
 import kotlin.math.abs
+import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
@@ -69,7 +78,13 @@ fun CameraPreview(
     modifier: Modifier = Modifier,
     exposureCompensation: Int = 0,
     gridSize: Int = 50,
-    probabilityMatrix: ProbabilityMatrix128x96? = null,
+    isGridSizeAdjusting: Boolean = false,
+    probabilityMatrix: ProbabilityMatrix32x24? = null,
+    probabilityEditEnabled: Boolean = false,
+    probabilityEditMode: ProbabilityEditMode = ProbabilityEditMode.Decrease,
+    probabilityEditStep: Float = 0.2f,
+    onProbabilityMatrixChange: (ProbabilityMatrix32x24) -> Unit = {},
+    onProbabilityCellSelected: (Pair<Int, Int>?) -> Unit = {},
     detector: BrightSpotDetector,  // 必须在工程中提供实现
     enableRoiOptimization: Boolean = true,  // 是否启用ROI优化
     onBrightSpotsDetected: (List<BrightSpot>, Pair<Int, Int>?) -> Unit = { _, _ -> },
@@ -88,13 +103,21 @@ fun CameraPreview(
     var camera by remember { mutableStateOf<Camera?>(null) }
     var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
     var zoomRatioDisplay by remember { mutableFloatStateOf(1f) }
+    var minZoomRatioDisplay by remember { mutableFloatStateOf(1f) }
+    var maxZoomRatioDisplay by remember { mutableFloatStateOf(1f) }
     var focusMarkerVisible by remember { mutableStateOf(false) }
     var focusMarkerColor by remember { mutableStateOf(Color.White) }
     val focusMarkerRotation = remember { Animatable(0f) }
     val focusMarkerAlpha = remember { Animatable(1f) }
     val focusMarkerGapOffset = remember { Animatable(0f) }
     var focusMarkerAnimJob by remember { mutableStateOf<Job?>(null) }
+    var showGridPreview by remember { mutableStateOf(false) }
+    var hasObservedGridSizeChange by remember { mutableStateOf(false) }
     var halfPressActive by remember { mutableStateOf(false) }
+    var selectedProbabilityDisplayCell by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var lastEditedProbabilityDisplayCell by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var dragAnchorProbabilityDisplayCell by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var liveProbabilityMatrix by remember(probabilityMatrix) { mutableStateOf(probabilityMatrix) }
     val forceGlobalSearchRequested = remember { AtomicBoolean(false) }
 
     // 跟踪上一个三色点的三个位置（用于ROI优化）
@@ -146,6 +169,27 @@ fun CameraPreview(
         }
     }
 
+    LaunchedEffect(probabilityEditEnabled) {
+        if (!probabilityEditEnabled) {
+            selectedProbabilityDisplayCell = null
+            lastEditedProbabilityDisplayCell = null
+            dragAnchorProbabilityDisplayCell = null
+            onProbabilityCellSelected(null)
+        }
+    }
+
+    LaunchedEffect(gridSize, isGridSizeAdjusting) {
+        if (!hasObservedGridSizeChange) {
+            hasObservedGridSizeChange = true
+            return@LaunchedEffect
+        }
+        showGridPreview = true
+        if (!isGridSizeAdjusting) {
+            delay(500)
+            showGridPreview = false
+        }
+    }
+
     // 当曝光补偿改变时更新相机设置
     LaunchedEffect(exposureCompensation) {
         camera?.let { cam ->
@@ -175,6 +219,8 @@ fun CameraPreview(
             val clampedZoom = targetZoom.coerceIn(zoomState.minZoomRatio, zoomState.maxZoomRatio)
             cam.cameraControl.setZoomRatio(clampedZoom)
             zoomRatioDisplay = clampedZoom
+            minZoomRatioDisplay = zoomState.minZoomRatio
+            maxZoomRatioDisplay = zoomState.maxZoomRatio
         }
     }
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -508,7 +554,10 @@ fun CameraPreview(
         label = "roiPulseAlpha"
     )
 
-    Box(modifier = modifier
+    val previewInteractionModifier = if (probabilityEditEnabled) {
+        modifier
+    } else {
+        modifier
         .pointerInput(Unit) {
             // 长按+拖动：创建限制识别区域
             detectDragGesturesAfterLongPress(
@@ -590,7 +639,9 @@ fun CameraPreview(
                 }
             )
         }
-    ) {
+    }
+
+    Box(modifier = previewInteractionModifier) {
         // 相机预览视图
         AndroidView(
             modifier = Modifier.fillMaxSize(),
@@ -731,6 +782,8 @@ fun CameraPreview(
 
                         camera = cam
                         zoomRatioDisplay = cam.cameraInfo.zoomState.value?.zoomRatio ?: 1f
+                        minZoomRatioDisplay = cam.cameraInfo.zoomState.value?.minZoomRatio ?: 1f
+                        maxZoomRatioDisplay = cam.cameraInfo.zoomState.value?.maxZoomRatio ?: 1f
                         val camera2Info = Camera2CameraInfo.from(cam.cameraInfo)
                         val ranges = camera2Info.getCameraCharacteristic(
                             CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES
@@ -779,25 +832,30 @@ fun CameraPreview(
                     postTranslate(dx, dy)
                 }
 
-                // 概率矩阵可视化：低概率更灰白，高概率更透明
+                // 概率矩阵可视化：编辑模式下显示更明确的整格网格，普通模式维持轻量覆盖。
                 probabilityMatrix?.let { matrix ->
                     val rows = matrix.rowsForImage(imageWidth, imageHeight)
                     val cols = matrix.colsForImage(imageWidth, imageHeight)
                     val cellWidth = imageWidth.toFloat() / cols.toFloat()
                     val cellHeight = imageHeight.toFloat() / rows.toFloat()
 
-                    val rowStep = 2
-                    val colStep = 2
-                    val lowWeight = 0.2f
-                    val highWeight = 0.8f
+                    val rowStep = 1
+                    val colStep = 1
+                    val lowWeight = ProbabilityMatrix32x24.MIN_WEIGHT
+                    val highWeight = ProbabilityMatrix32x24.MAX_WEIGHT
                     val weightRange = (highWeight - lowWeight).coerceAtLeast(0.001f)
-                    val hazeColor = Color(0xFFF2F2F2)
+                    val lowColor = if (probabilityEditEnabled) Color(0xFFF8FBFF) else Color(0xFFF2F2F2)
+                    val highColor = if (probabilityEditEnabled) Color(0xFF147EFB) else Color(0xFFF2F2F2)
 
                     for (row in 0 until rows step rowStep) {
                         for (col in 0 until cols step colStep) {
                             val weight = matrix.weightAtGridCell(row, col, imageWidth, imageHeight)
                             val normalized = ((weight - lowWeight) / weightRange).coerceIn(0f, 1f)
-                            val alpha = (0.50f * (1f - normalized)).coerceIn(0.02f, 0.50f)
+                            val alpha = if (probabilityEditEnabled) {
+                                (0.22f + normalized * 0.48f).coerceIn(0.12f, 0.70f)
+                            } else {
+                                (0.50f * (1f - normalized)).coerceIn(0.02f, 0.50f)
+                            }
 
                             val left = dx + col * cellWidth * scale
                             val top = dy + row * cellHeight * scale
@@ -805,9 +863,49 @@ fun CameraPreview(
                             val drawH = cellHeight * scale * rowStep
 
                             drawRect(
-                                color = hazeColor.copy(alpha = alpha),
+                                color = if (probabilityEditEnabled) {
+                                    androidx.compose.ui.graphics.lerp(lowColor, highColor, normalized).copy(alpha = alpha)
+                                } else {
+                                    lowColor.copy(alpha = alpha)
+                                },
                                 topLeft = Offset(left, top),
                                 size = androidx.compose.ui.geometry.Size(drawW, drawH)
+                            )
+                        }
+                    }
+
+                    if (probabilityEditEnabled) {
+                        for (row in 0..rows) {
+                            val y = dy + row * cellHeight * scale
+                            drawLine(
+                                color = Color.White.copy(alpha = if (row % 8 == 0) 0.80f else 0.35f),
+                                start = Offset(dx, y),
+                                end = Offset(dx + imageWidth * scale, y),
+                                strokeWidth = if (row % 8 == 0) 1.4f else 0.5f
+                            )
+                        }
+                        for (col in 0..cols) {
+                            val x = dx + col * cellWidth * scale
+                            drawLine(
+                                color = Color.White.copy(alpha = if (col % 8 == 0) 0.80f else 0.35f),
+                                start = Offset(x, dy),
+                                end = Offset(x, dy + imageHeight * scale),
+                                strokeWidth = if (col % 8 == 0) 1.4f else 0.5f
+                            )
+                        }
+
+                        selectedProbabilityDisplayCell?.let { (row, col) ->
+                            drawRect(
+                                color = Color(0xFFFFF176),
+                                topLeft = Offset(
+                                    dx + col * cellWidth * scale,
+                                    dy + row * cellHeight * scale
+                                ),
+                                size = androidx.compose.ui.geometry.Size(
+                                    cellWidth * scale,
+                                    cellHeight * scale
+                                ),
+                                style = Stroke(width = 2f)
                             )
                         }
                     }
@@ -1375,6 +1473,47 @@ fun CameraPreview(
             }
         }
 
+        val gridPreviewAlpha by animateFloatAsState(
+            targetValue = if (showGridPreview) 1f else 0f,
+            animationSpec = tween(durationMillis = 220),
+            label = "grid_preview_alpha"
+        )
+
+        if (gridPreviewAlpha > 0.01f) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val imageSize = previewSize ?: return@Canvas
+                val (imageWidth, imageHeight) = imageSize
+                val previewScale = min(size.width / imageWidth.toFloat(), size.height / imageHeight.toFloat())
+                val displayedWidth = imageWidth * previewScale
+                val displayedHeight = imageHeight * previewScale
+                val stepX = displayedWidth / gridSize.toFloat()
+                val stepY = displayedHeight / gridSize.toFloat()
+                val gridColor = Color.White.copy(alpha = 0.24f * gridPreviewAlpha)
+                val borderColor = Color.White.copy(alpha = 0.58f * gridPreviewAlpha)
+
+                if (stepX > 0f && stepY > 0f) {
+                    for (column in 0..gridSize) {
+                        val x = stepX * column
+                        drawLine(
+                            color = if (column == 0 || column == gridSize) borderColor else gridColor,
+                            start = Offset(x, 0f),
+                            end = Offset(x, displayedHeight),
+                            strokeWidth = if (column == 0 || column == gridSize) 1.5f else 1f
+                        )
+                    }
+                    for (row in 0..gridSize) {
+                        val y = stepY * row
+                        drawLine(
+                            color = if (row == 0 || row == gridSize) borderColor else gridColor,
+                            start = Offset(0f, y),
+                            end = Offset(displayedWidth, y),
+                            strokeWidth = if (row == 0 || row == gridSize) 1.5f else 1f
+                        )
+                    }
+                }
+            }
+        }
+
         if (focusMarkerVisible) {
             Canvas(modifier = Modifier.fillMaxSize()) {
                 // 图标中心：使用预览实际显示区域中心，避免在 FIT_START + 留白时偏右/偏下
@@ -1386,13 +1525,13 @@ fun CameraPreview(
                 // 中间空心圆半径：越大整体图标越醒目
                 val radius = 12f
                 // 中间空心圆线宽：越粗越有“机械对焦框”质感
-                val ringStroke = 3.6f
+                val ringStroke = 4.8f
                 // 辐条与圆之间的间隔：出现时会做脉动变化，模拟对焦过程
                 val lineGap = (21f + focusMarkerGapOffset.value).coerceIn(6f, 36f)
                 // 辐条长度：越长越有方向感
                 val lineLen = 64f
                 // 辐条线宽：越粗越强调对焦状态
-                val lineStroke = 2.8f
+                val lineStroke = 3.6f
                 val alpha = focusMarkerAlpha.value.coerceIn(0f, 1f)
                 val color = focusMarkerColor.copy(alpha = alpha)
                 // 第一根辐条朝向正上方（-90°），其余每隔120°
@@ -1425,15 +1564,188 @@ fun CameraPreview(
             }
         }
 
-        Text(
-            text = "${"%.1f".format(zoomRatioDisplay)}x",
-            color = Color.White,
+        if (probabilityEditEnabled && probabilityMatrix != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInteropFilter { event ->
+                        fun offsetToDisplayCell(x: Float, y: Float): Pair<Int, Int>? {
+                            val sizeInfo = previewSize ?: return null
+                            val imageWidth = sizeInfo.first
+                            val imageHeight = sizeInfo.second
+                            val drawWidth = previewViewRef?.width?.toFloat()?.coerceAtLeast(1f) ?: return null
+                            val drawHeight = previewViewRef?.height?.toFloat()?.coerceAtLeast(1f) ?: return null
+                            val scale = min(drawWidth / imageWidth.toFloat(), drawHeight / imageHeight.toFloat())
+                            val imageDrawWidth = imageWidth * scale
+                            val imageDrawHeight = imageHeight * scale
+                            if (x < 0f || y < 0f || x > imageDrawWidth || y > imageDrawHeight) {
+                                return null
+                            }
+
+                            val rows = probabilityMatrix.rowsForImage(imageWidth, imageHeight)
+                            val cols = probabilityMatrix.colsForImage(imageWidth, imageHeight)
+                            val cellWidth = imageDrawWidth / cols.toFloat()
+                            val cellHeight = imageDrawHeight / rows.toFloat()
+                            val col = (x / cellWidth).toInt().coerceIn(0, cols - 1)
+                            val row = (y / cellHeight).toInt().coerceIn(0, rows - 1)
+                            return row to col
+                        }
+
+                        fun displayPath(from: Pair<Int, Int>, to: Pair<Int, Int>): List<Pair<Int, Int>> {
+                            val rowDelta = to.first - from.first
+                            val colDelta = to.second - from.second
+                            val steps = max(abs(rowDelta), abs(colDelta))
+                            if (steps == 0) return listOf(from)
+
+                            return buildList {
+                                for (step in 0..steps) {
+                                    val t = step.toFloat() / steps.toFloat()
+                                    val row = kotlin.math.round(from.first + rowDelta * t).toInt()
+                                    val col = kotlin.math.round(from.second + colDelta * t).toInt()
+                                    val cell = row to col
+                                    if (lastOrNull() != cell) add(cell)
+                                }
+                            }
+                        }
+
+                        fun applyProbabilityEditPath(targetCell: Pair<Int, Int>) {
+                            val sizeInfo = previewSize ?: return
+                            val imageWidth = sizeInfo.first
+                            val imageHeight = sizeInfo.second
+                            val delta = if (probabilityEditMode == ProbabilityEditMode.Increase) {
+                                probabilityEditStep
+                            } else {
+                                -probabilityEditStep
+                            }
+                            val startCell = dragAnchorProbabilityDisplayCell ?: targetCell
+                            if (dragAnchorProbabilityDisplayCell != null && startCell == targetCell) {
+                                selectedProbabilityDisplayCell = targetCell
+                                return
+                            }
+                            val pathCells = if (dragAnchorProbabilityDisplayCell == null) {
+                                listOf(targetCell)
+                            } else {
+                                displayPath(startCell, targetCell).drop(1)
+                            }
+                            if (pathCells.isEmpty()) return
+                            var nextMatrix = liveProbabilityMatrix ?: probabilityMatrix
+
+                            pathCells.forEach { (row, col) ->
+                                nextMatrix = nextMatrix.updateDisplayedCell(
+                                    row = row,
+                                    col = col,
+                                    imageWidth = imageWidth,
+                                    imageHeight = imageHeight,
+                                    delta = delta
+                                )
+                                lastEditedProbabilityDisplayCell = row to col
+                            }
+
+                            liveProbabilityMatrix = nextMatrix
+                            selectedProbabilityDisplayCell = targetCell
+                            dragAnchorProbabilityDisplayCell = targetCell
+                            val mappedCell = if (imageWidth > imageHeight) {
+                                targetCell.second to targetCell.first
+                            } else {
+                                targetCell
+                            }
+                            onProbabilityCellSelected(mappedCell)
+                            onProbabilityMatrixChange(nextMatrix)
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
+
+                        when (event.actionMasked) {
+                            MotionEvent.ACTION_DOWN -> {
+                                lastEditedProbabilityDisplayCell = null
+                                dragAnchorProbabilityDisplayCell = null
+                                offsetToDisplayCell(event.x, event.y)?.let { applyProbabilityEditPath(it) }
+                                true
+                            }
+                            MotionEvent.ACTION_MOVE -> {
+                                for (index in 0 until event.historySize) {
+                                    offsetToDisplayCell(
+                                        event.getHistoricalX(index),
+                                        event.getHistoricalY(index)
+                                    )?.let { applyProbabilityEditPath(it) }
+                                }
+                                offsetToDisplayCell(event.x, event.y)?.let { applyProbabilityEditPath(it) }
+                                true
+                            }
+                            MotionEvent.ACTION_UP,
+                            MotionEvent.ACTION_CANCEL -> {
+                                lastEditedProbabilityDisplayCell = null
+                                dragAnchorProbabilityDisplayCell = null
+                                true
+                            }
+                            else -> true
+                        }
+                    }
+            )
+        }
+
+        val zoomProgressTarget = remember(zoomRatioDisplay, minZoomRatioDisplay, maxZoomRatioDisplay) {
+            val minZoom = minZoomRatioDisplay.coerceAtLeast(0.01f)
+            val maxZoom = maxZoomRatioDisplay.coerceAtLeast(minZoom + 0.0001f)
+            val currentZoom = zoomRatioDisplay.coerceIn(minZoom, maxZoom)
+
+            val relativeZoom = (currentZoom / minZoom).coerceAtLeast(1f)
+            val maxRelativeZoom = (maxZoom / minZoom).coerceAtLeast(1.0001f)
+
+            (ln(relativeZoom) / ln(maxRelativeZoom)).coerceIn(0f, 1f)
+        }
+        val animatedZoomProgress by animateFloatAsState(
+            targetValue = zoomProgressTarget,
+            animationSpec = tween(durationMillis = 220),
+            label = "zoom_indicator_progress"
+        )
+
+        BoxWithConstraints(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(8.dp)
-                //.background(Color(0x77000000), RoundedCornerShape(3.dp))
-                .padding(horizontal = 10.dp, vertical = 6.dp)
-        )
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 6.dp)
+        ) {
+            val minBarWidth = 24.dp
+            val barWidth = minBarWidth + (maxWidth - minBarWidth) * animatedZoomProgress
+
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd),
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = "${"%.1f".format(zoomRatioDisplay)}x",
+                    color = Color.White,
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .background(
+                                color = Color(0x40FFFFFF),
+                                shape = RoundedCornerShape(4.dp)
+                            )
+                    )
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .width(barWidth)
+                            .height(4.dp)
+                            .background(
+                                color = Color.White,
+                                shape = RoundedCornerShape(4.dp)
+                            )
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -1499,7 +1811,7 @@ private fun processImage(
     imageProxy: ImageProxy,
     detector: BrightSpotDetector,
     gridSize: Int = 50,
-    probabilityMatrix: ProbabilityMatrix128x96? = null,
+    probabilityMatrix: ProbabilityMatrix32x24? = null,
     enableRoiOptimization: Boolean = true,
     lastTriSpots: Triple<Offset, Offset, Offset>? = null,
     lastTriSpotsImageSize: Pair<Int, Int>? = null,

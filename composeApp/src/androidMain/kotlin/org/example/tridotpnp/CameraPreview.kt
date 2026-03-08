@@ -76,8 +76,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun CameraPreview(
     modifier: Modifier = Modifier,
-    exposureCompensation: Int = 0,
-    gridSize: Int = 50,
+    tuning: AppTuningSettings = AppTuningSettings(),
     isGridSizeAdjusting: Boolean = false,
     probabilityMatrix: ProbabilityMatrix32x24? = null,
     probabilityEditEnabled: Boolean = false,
@@ -91,11 +90,10 @@ fun CameraPreview(
     onBitmapCaptured: (Bitmap) -> Unit = {},
     captureBitmapForCalibration: Boolean = false,
     onFpsUpdate: (Float) -> Unit = {},  // 帧率更新回调
-    // 分区参数（可调）
-    maxDepth: Int = 13,            // 分区树最大深度（更大值 -> 更细）
-    splitRatio: Float = 0.618f,   // 分割比例
-    minLeafSizePx: Int = 3,       // 叶子最小边长（像素）
-    maxDrawDepth: Int = 13         // 实际绘制的最大深度（<= maxDepth）
+    maxDepth: Int = 13,
+    splitRatio: Float = 0.618f,
+    minLeafSizePx: Int = 3,
+    maxDrawDepth: Int = 13
 ) {
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     var brightSpots by remember { mutableStateOf<List<BrightSpot>>(emptyList()) }
@@ -153,16 +151,17 @@ fun CameraPreview(
     val currentOnFpsUpdate = rememberUpdatedState(onFpsUpdate)
 
     // 使用rememberUpdatedState确保闭包中始终使用最新的值
-    val currentExposureCompensation = rememberUpdatedState(exposureCompensation)
-    val currentGridSize = rememberUpdatedState(gridSize)
+    val currentExposureCompensation = rememberUpdatedState(tuning.exposureCompensation)
+    val currentGridSize = rememberUpdatedState(tuning.gridSize)
     val currentProbabilityMatrix = rememberUpdatedState(probabilityMatrix)
-    val currentEnableRoiOptimization = rememberUpdatedState(enableRoiOptimization)
+    val currentEnableRoiOptimization = rememberUpdatedState(tuning.enableRoiOptimization)
     val currentCaptureBitmapForCalibration = rememberUpdatedState(captureBitmapForCalibration)
+    val currentTuning = rememberUpdatedState(tuning)
     var skipFrames by remember { mutableIntStateOf(0) }
 
     // ROI优化关闭时清除跟踪状态和可视化信息
-    LaunchedEffect(enableRoiOptimization) {
-        if (!enableRoiOptimization) {
+    LaunchedEffect(tuning.enableRoiOptimization) {
+        if (!tuning.enableRoiOptimization) {
             lastTriSpots = null
             lastTriSpotsImageSize = null
             roiVisualizationInfo = null
@@ -178,7 +177,7 @@ fun CameraPreview(
         }
     }
 
-    LaunchedEffect(gridSize, isGridSizeAdjusting) {
+    LaunchedEffect(tuning.gridSize, isGridSizeAdjusting) {
         if (!hasObservedGridSizeChange) {
             hasObservedGridSizeChange = true
             return@LaunchedEffect
@@ -191,7 +190,7 @@ fun CameraPreview(
     }
 
     // 当曝光补偿改变时更新相机设置
-    LaunchedEffect(exposureCompensation) {
+    LaunchedEffect(tuning.exposureCompensation) {
         camera?.let { cam ->
             val cameraControl = cam.cameraControl
 
@@ -204,8 +203,8 @@ fun CameraPreview(
             camera2Control.setCaptureRequestOptions(lockRequest)
 
             // 再设置曝光补偿
-            cameraControl.setExposureCompensationIndex(exposureCompensation)
-            android.util.Log.d("Camera", "AE locked with exposure: $exposureCompensation")
+            cameraControl.setExposureCompensationIndex(tuning.exposureCompensation)
+            android.util.Log.d("Camera", "AE locked with exposure: ${tuning.exposureCompensation}")
         }
     }
 
@@ -695,7 +694,7 @@ fun CameraPreview(
                                     processImage(
                                         imageProxy = imageProxy,
                                         detector = detector,
-                                        gridSize = currentGridSize.value,
+                                        tuning = currentTuning.value,
                                         probabilityMatrix = currentProbabilityMatrix.value,
                                         enableRoiOptimization = currentEnableRoiOptimization.value,
                                         lastTriSpots = if (currentEnableRoiOptimization.value) lastTriSpots else null,
@@ -1486,6 +1485,7 @@ fun CameraPreview(
                 val previewScale = min(size.width / imageWidth.toFloat(), size.height / imageHeight.toFloat())
                 val displayedWidth = imageWidth * previewScale
                 val displayedHeight = imageHeight * previewScale
+                val gridSize = tuning.gridSize
                 val stepX = displayedWidth / gridSize.toFloat()
                 val stepY = displayedHeight / gridSize.toFloat()
                 val gridColor = Color.White.copy(alpha = 0.24f * gridPreviewAlpha)
@@ -1810,7 +1810,7 @@ private fun calculateCircumradius(
 private fun processImage(
     imageProxy: ImageProxy,
     detector: BrightSpotDetector,
-    gridSize: Int = 50,
+    tuning: AppTuningSettings = AppTuningSettings(),
     probabilityMatrix: ProbabilityMatrix32x24? = null,
     enableRoiOptimization: Boolean = true,
     lastTriSpots: Triple<Offset, Offset, Offset>? = null,
@@ -1828,7 +1828,9 @@ private fun processImage(
         val bitmap = imageProxy.toBitmap()
         val rotatedBitmap = rotateBitmap(bitmap, imageProxy.imageInfo.rotationDegrees.toFloat())
 
-        val maxDim = 1280f
+        val gridSize = tuning.gridSize
+        val threshold = tuning.detectionThreshold
+        val maxDim = tuning.workingMaxDimension.toFloat().coerceAtLeast(64f)
         val origW = rotatedBitmap.width
         val origH = rotatedBitmap.height
         val scaleDown = kotlin.math.min(1f, maxDim / kotlin.math.max(origW, origH))
@@ -1870,14 +1872,14 @@ private fun processImage(
             val p3 = Offset(lastTriSpots.third.x * scaleX, lastTriSpots.third.y * scaleY)
             val centerX = (p1.x + p2.x + p3.x) / 3f
             val centerY = (p1.y + p2.y + p3.y) / 3f
-            val radius = calculateCircumradius(p1, p2, p3) * 2f
+            val radius = calculateCircumradius(p1, p2, p3) * tuning.roiInitialRadiusMultiplier
             Triple(centerX * workingScale, centerY * workingScale, radius * workingScale)
         } else null
 
         var lastTriRadius: Float? = null // 记录上一个外接圆半径
         val recentAttempts = mutableListOf<Boolean>() // 记录最近尝试的结果，成功为true，失败为false
-        val maxRecentAttempts = 7  // 最近的尝试次数
-        val failureThreshold = 4  // 失败次数阈值，如果失败次数大于此阈值，则触发全局搜索
+        val maxRecentAttempts = tuning.roiRecentAttempts.coerceAtLeast(1)
+        val failureThreshold = tuning.roiFailureThreshold.coerceIn(1, maxRecentAttempts)
 
         val (spotsScaled, foundInManualRoi) = if (effectiveManualRoi != null) {
             // 手动ROI的逻辑与之前相同，保持不变
@@ -1911,7 +1913,7 @@ private fun processImage(
 
             val manualRoiSpots = detector.detectBrightSpots(
                 bitmap = workingBitmap,
-                threshold = 80f,
+                threshold = threshold,
                 gridSize = gridSize,                roiLeft = roiLeft,
                 roiTop = roiTop,
                 roiRight = roiRight,
@@ -1931,12 +1933,12 @@ private fun processImage(
             val maxRadiusLimit = limitRegionWorking?.let {
                 maxOf(it.right - it.left, it.bottom - it.top) * 0.5f
             }
-            val maxAllowedRadius = min(max(workingWidth, workingHeight) * 0.4f, maxRadiusLimit ?: Float.MAX_VALUE)
+            val maxAllowedRadius = min(max(workingWidth, workingHeight) * tuning.roiMaxRadiusRatio.coerceIn(0.05f, 1f), maxRadiusLimit ?: Float.MAX_VALUE)
 
             var foundSpots: List<BrightSpot>? = null
             var finalRoiInfo: RoiVisualizationInfo? = null
             var expansionCount = 0
-            val maxExpansions = 10
+            val maxExpansions = tuning.roiMaxExpansions.coerceAtLeast(1)
 
             while (foundSpots == null && currentRadius <= maxAllowedRadius && expansionCount < maxExpansions) {
                 var roiLeft = (centerX - currentRadius).toInt().coerceAtLeast(0)
@@ -1951,7 +1953,7 @@ private fun processImage(
                     roiRight = minOf(roiRight, limitRegionWorking.right)
                     roiBottom = minOf(roiBottom, limitRegionWorking.bottom)
                     if (roiRight <= roiLeft || roiBottom <= roiTop) {
-                        currentRadius *= 1.3f
+                        currentRadius *= tuning.roiExpandFactor.coerceAtLeast(1.01f)
                         expansionCount++
                         continue
                     }
@@ -1959,7 +1961,7 @@ private fun processImage(
 
                 val roiSpots = detector.detectBrightSpots(
                     bitmap = workingBitmap,
-                    threshold = 80f,
+                    threshold = threshold,
                     gridSize = gridSize,                    roiLeft = roiLeft,
                     roiTop = roiTop,
                     roiRight = roiRight,
@@ -1971,7 +1973,7 @@ private fun processImage(
                 val isStable = if (roiSpots.size == 3 && lastTriRadius != null) {
                     val currRadius = calculateCircumradius(roiSpots[0].position, roiSpots[1].position, roiSpots[2].position)
                     val changeRatio = abs(currRadius - lastTriRadius) / lastTriRadius
-                    changeRatio <= 0.3f
+                    changeRatio <= tuning.roiStabilityTolerance.coerceAtLeast(0f)
                 } else roiSpots.size == 3
 
                 if (roiSpots.size == 3 && isStable) {
@@ -1996,7 +1998,7 @@ private fun processImage(
                         recentAttempts.removeAt(0)
                     }
                 } else {
-                    currentRadius *= 1.3f
+                    currentRadius *= tuning.roiExpandFactor.coerceAtLeast(1.01f)
                     expansionCount++
                     // 记录失败
                     recentAttempts.add(false)
@@ -2019,7 +2021,7 @@ private fun processImage(
                 val searchResult = limitRegionWorking?.let {
                     detector.detectBrightSpots(
                         bitmap = workingBitmap,
-                        threshold = 80f,
+                        threshold = threshold,
                         gridSize = gridSize,                        roiLeft = it.left,
                         roiTop = it.top,
                         roiRight = it.right,
@@ -2028,7 +2030,7 @@ private fun processImage(
                     )
                 } ?: detector.detectBrightSpots(
                     bitmap = workingBitmap,
-                    threshold = 80f,
+                    threshold = threshold,
                     gridSize = gridSize,                    probabilityMatrix = probabilityMatrix
                 )
                 Pair(searchResult, false)
@@ -2043,7 +2045,7 @@ private fun processImage(
             val searchResult = limitRegionWorking?.let {
                 detector.detectBrightSpots(
                     bitmap = workingBitmap,
-                    threshold = 80f,
+                    threshold = threshold,
                     gridSize = gridSize,                    roiLeft = it.left,
                     roiTop = it.top,
                     roiRight = it.right,
@@ -2052,7 +2054,7 @@ private fun processImage(
                 )
             } ?: detector.detectBrightSpots(
                 bitmap = workingBitmap,
-                threshold = 80f,
+                threshold = threshold,
                 gridSize = gridSize,                probabilityMatrix = probabilityMatrix
             )
             Pair(searchResult, false)
@@ -2065,7 +2067,7 @@ private fun processImage(
             spotsMapped.filter { it.position.x in region.left..region.right && it.position.y in region.top..region.bottom }
         } ?: spotsMapped
 
-        val refinedSpots = refineSpotsOnOriginal(rotatedBitmap, spots, gridSize)
+        val refinedSpots = refineSpotsOnOriginal(rotatedBitmap, spots, tuning)
         onSpotsDetected(refinedSpots, Pair(rotatedBitmap.width, rotatedBitmap.height), foundInManualRoi)
 
         if (captureBitmapForCalibration) {
@@ -2088,13 +2090,15 @@ private operator fun Offset.minus(other: Offset) = Offset(x - other.x, y - other
 private fun refineSpotsOnOriginal(
     bitmap: Bitmap,
     spots: List<BrightSpot>,
-    gridSize: Int
+    tuning: AppTuningSettings
 ): List<BrightSpot> {
     if (spots.isEmpty()) return spots
     val width = bitmap.width
     val height = bitmap.height
-    val step = kotlin.math.max(1, kotlin.math.max(width / gridSize, height / gridSize))
-    val radius = (step * 2f).toInt().coerceAtLeast(6).coerceAtMost(kotlin.math.min(width, height) / 6)
+    val step = kotlin.math.max(1, kotlin.math.max(width / tuning.gridSize, height / tuning.gridSize))
+    val radius = (step * tuning.refineRadiusMultiplier).toInt()
+        .coerceAtLeast(tuning.refineMinRadiusPx)
+        .coerceAtMost(kotlin.math.min(width, height) / 6)
 
     fun weightFor(pixel: Int, prefer: LedColor, backgroundDarkness: Float = 0.5f): Float {
         val r = ((pixel shr 16) and 0xFF).toFloat()
@@ -2119,7 +2123,7 @@ private fun refineSpotsOnOriginal(
     fun refineOne(cx: Float, cy: Float, prefer: LedColor): Offset {
         var centerX = cx
         var centerY = cy
-        repeat(2) {
+        repeat(tuning.refineIterations.coerceAtLeast(1)) {
             val x0 = (centerX - radius).toInt().coerceAtLeast(0)
             val y0 = (centerY - radius).toInt().coerceAtLeast(0)
             val x1 = (centerX + radius).toInt().coerceAtMost(width - 1)
@@ -2134,13 +2138,18 @@ private fun refineSpotsOnOriginal(
             var sumY = 0f
             // 轻度径向加权，抑制边缘（高斯近似常数系数）
             val radF = radius.toFloat()
-            val invTwoSigma2 = 1f / (2f * (radF * 0.6f) * (radF * 0.6f))
+            val sigmaFactor = tuning.refineGaussianSigmaFactor.coerceAtLeast(0.1f)
+            val invTwoSigma2 = 1f / (2f * (radF * sigmaFactor) * (radF * sigmaFactor))
             for (yy in 0 until hRect) {
                 val row = yy * wRect
                 val yAbs = (y0 + yy).toFloat()
                 for (xx in 0 until wRect) {
                     val xAbs = (x0 + xx).toFloat()
-                    val w = weightFor(buf[row + xx], prefer, backgroundDarkness = 0.6f)
+                    val w = weightFor(
+                        buf[row + xx],
+                        prefer,
+                        backgroundDarkness = tuning.refineBackgroundDarkness
+                    )
                     if (w <= 0f) continue
                     val dx = xAbs - centerX
                     val dy = yAbs - centerY

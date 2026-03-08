@@ -55,6 +55,7 @@ class BrightSpotDetector {
     var dynamicThresholdMin: Float = 30f  // 动态阈值最小值
     var minPixelCount: Int = 0            // 最小像素数
     var minRefineRadius: Int = 2          // 最小细化半径
+    var dynamicThresholdRatio: Float = 0.7f // 动态阈值占区域峰值亮度的比例
 
     // 面积过滤：在区域里，超过 dynThreshold 的像素太多 => 大块亮色，过滤掉
     var maxBrightPixelRatio: Float = 0.18f   // 亮像素最多占区域面积的比例（0.10~0.30）
@@ -79,6 +80,13 @@ class BrightSpotDetector {
     @Volatile var probabilityCandidateExponent: Float = 1f
     @Volatile var probabilityGroupExponent: Float = 1f
     @Volatile var probabilityWeightFloor: Float = 0.01f
+    @Volatile var topNCandidatesPerColor: Int = 16
+    @Volatile var minPairDistanceMultiplier: Float = 2f
+    @Volatile var maxPairDistanceMultiplier: Float = 20f
+    @Volatile var darkBackgroundBoost: Float = 0.5f
+    @Volatile var calibrationSearchStep: Int = 10
+    @Volatile var calibrationSearchRadius: Int = 15
+    @Volatile var sampleTopPercent: Float = 0.2f
 
     private fun candidateProbWeight(raw: Float): Float {
         val clamped = raw.coerceAtLeast(probabilityWeightFloor)
@@ -255,11 +263,11 @@ class BrightSpotDetector {
 
         // 三色模式：Top-N 候选 + 三点几何软惩罚 + “纯度加分” 只 refine 3 次
 
-            val topN = 16
+            val topN = topNCandidatesPerColor.coerceAtLeast(1)
             val base = max(stepX, stepY).toFloat()
 
-            val minPairDist = base * 2f
-            val maxPairDist = base * 20.0f
+            val minPairDist = base * minPairDistanceMultiplier.coerceAtLeast(0.1f)
+            val maxPairDist = base * maxPairDistanceMultiplier.coerceAtLeast(minPairDistanceMultiplier.coerceAtLeast(0.1f))
             val minPairDist2 = minPairDist * minPairDist
             val maxPairDist2 = maxPairDist * maxPairDist
 
@@ -490,7 +498,7 @@ class BrightSpotDetector {
         if (maxBrightness <= 0f) return null
 
         // 2) 动态阈值：只取最亮的一撮像素
-        val dynThreshold = max(dynamicThresholdMin, maxBrightness * 0.7f)
+        val dynThreshold = max(dynamicThresholdMin, maxBrightness * dynamicThresholdRatio.coerceIn(0.05f, 1f))
 
         var totalR = 0f
         var totalG = 0f
@@ -540,7 +548,7 @@ class BrightSpotDetector {
 
         // 5) 计算暗背景加权因子
         val darkRatio = darkPixelCount.toFloat() / regionArea  // 越接近1说明周围越暗
-        val darkBoost = 0.5f                                   // 可调参数，0~1之间
+        val darkBoost = darkBackgroundBoost.coerceIn(0f, 2f)
         val weightedBrightness = totalBrightness * (1f + darkBoost * darkRatio)
 
         // 6) 转 HSV，算到三个目标颜色的相似度，再乘加权亮度
@@ -771,8 +779,8 @@ class BrightSpotDetector {
         var bestGPos: Pair<Int, Int>? = null
         var bestBPos: Pair<Int, Int>? = null
 
-        val sampleStep = 10
-        val sampleRadius = 15
+        val sampleStep = calibrationSearchStep.coerceAtLeast(1)
+        val sampleRadius = calibrationSearchRadius.coerceAtLeast(1)
 
         val yStart = (centerY - radius).coerceAtLeast(sampleRadius)
         val yEnd = (centerY + radius).coerceAtMost(h - 1 - sampleRadius)
@@ -869,7 +877,7 @@ class BrightSpotDetector {
         }
         if (maxBr <= 0f) return Triple(0f, 0f, 0f)
 
-        val topPercent = 0.2f
+        val topPercent = sampleTopPercent.coerceIn(0.01f, 0.95f)
         val brightGate = max(minPixelBrightness, maxBr * (1f - topPercent))
 
         var sumR = 0f

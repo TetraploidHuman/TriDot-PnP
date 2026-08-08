@@ -1541,6 +1541,51 @@ private fun SettingsOverviewContent(
                 step = 1,
                 onValueChange = { onTuningChange(tuning.copy(roiFailureThreshold = it)) }
             )
+            FloatSliderSetting(
+                title = "跟踪粘滞裕度",
+                description = "基础粘滞：新三角形得分需高出该比例才允许切换。实际裕度还会随锁定置信度放大。0 关闭。",
+                value = tuning.trackSwitchMargin,
+                valueText = "%.0f%%".format(tuning.trackSwitchMargin * 100f),
+                range = 0f..1f,
+                steps = 19,
+                onValueChange = { onTuningChange(tuning.copy(trackSwitchMargin = it)) }
+            )
+            FloatSliderSetting(
+                title = "锁定匹配距离",
+                description = "判定仍是同一组锁定点时，每个颜色允许偏离上一帧位置的最大像素距离（工作图）。",
+                value = tuning.trackLockMaxDistPx,
+                valueText = "%.0f px".format(tuning.trackLockMaxDistPx),
+                range = 16f..200f,
+                steps = 22,
+                onValueChange = { onTuningChange(tuning.copy(trackLockMaxDistPx = it)) }
+            )
+            FloatSliderSetting(
+                title = "锁定置信上升",
+                description = "每连续稳定跟踪一帧，锁定置信度增加多少。跟踪越久，越难被旁路亮点抢走。",
+                value = tuning.trackLockConfidenceRise,
+                valueText = "%.2f".format(tuning.trackLockConfidenceRise),
+                range = 0.01f..0.3f,
+                steps = 28,
+                onValueChange = { onTuningChange(tuning.copy(trackLockConfidenceRise = it)) }
+            )
+            FloatSliderSetting(
+                title = "锁定置信衰减",
+                description = "丢检时每帧锁定置信度下降多少。衰减太快会重新变“飘”。",
+                value = tuning.trackLockConfidenceDecay,
+                valueText = "%.2f".format(tuning.trackLockConfidenceDecay),
+                range = 0.01f..0.3f,
+                steps = 28,
+                onValueChange = { onTuningChange(tuning.copy(trackLockConfidenceDecay = it)) }
+            )
+            FloatSliderSetting(
+                title = "置信放大粘滞",
+                description = "有效粘滞 = 基础 × (1 + 本值 × 置信度)。例如 2.0 且置信度满时，粘滞为基础的 3 倍。",
+                value = tuning.trackLockConfidenceBoost,
+                valueText = "%.1f×".format(tuning.trackLockConfidenceBoost),
+                range = 0f..4f,
+                steps = 19,
+                onValueChange = { onTuningChange(tuning.copy(trackLockConfidenceBoost = it)) }
+            )
         }
 
         SettingsSection(

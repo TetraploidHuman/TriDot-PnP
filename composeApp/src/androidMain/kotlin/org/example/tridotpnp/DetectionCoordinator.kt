@@ -91,6 +91,9 @@ internal fun BrightSpotDetector.applyTuning(tuning: AppTuningSettings) {
     calibrationSearchStep = tuning.calibrationSearchStep
     calibrationSearchRadius = tuning.calibrationSearchRadius
     sampleTopPercent = tuning.sampleTopPercent
+    trackSwitchMargin = tuning.trackSwitchMargin
+    trackLockMaxDistPx = tuning.trackLockMaxDistPx
+    trackLockConfidenceBoost = tuning.trackLockConfidenceBoost
     gmmColorModel.enabled = tuning.enableGmmSoftSegment
     gmmColorModel.blend = tuning.gmmBlend
 }

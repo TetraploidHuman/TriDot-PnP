@@ -94,6 +94,24 @@ internal fun resolveRoiSampleStepPx(
     return max(ideal, budgetStep).coerceAtMost(globalStep)
 }
 
+/** Map previous-frame RGB lock from original coords into working-bitmap coords. */
+internal fun mapLockPriorToWorking(
+    lastTriSpots: Triple<Offset, Offset, Offset>,
+    lastTriSpotsImageSize: Pair<Int, Int>,
+    currentWidth: Int,
+    currentHeight: Int,
+    workingScale: Float
+): Triple<Offset, Offset, Offset> {
+    val (lastW, lastH) = lastTriSpotsImageSize
+    val scaleX = currentWidth.toFloat() / lastW.toFloat() * workingScale
+    val scaleY = currentHeight.toFloat() / lastH.toFloat() * workingScale
+    return Triple(
+        Offset(lastTriSpots.first.x * scaleX, lastTriSpots.first.y * scaleY),
+        Offset(lastTriSpots.second.x * scaleX, lastTriSpots.second.y * scaleY),
+        Offset(lastTriSpots.third.x * scaleX, lastTriSpots.third.y * scaleY)
+    )
+}
+
 private fun AppTuningSettings.roiSampleStepOrNull(
     imageWidth: Int,
     imageHeight: Int,
@@ -122,6 +140,7 @@ internal fun processImage(
     enableRoiOptimization: Boolean = true,
     lastTriSpots: Triple<Offset, Offset, Offset>? = null,
     lastTriSpotsImageSize: Pair<Int, Int>? = null,
+    lockConfidence: Float = 0f,
     manualRoi: ManualRoiCoords? = null,
     limitRegion: ManualRoiCoords? = null,
     forceGlobalSearch: Boolean = false,
@@ -155,6 +174,7 @@ internal fun processImage(
             manualRoi = effectiveManualRoi,
             lastTriSpots = lastTriSpots,
             lastTriSpotsImageSize = lastTriSpotsImageSize,
+            lockConfidence = lockConfidence,
             limitRegionWorking = limitRegionWorking,
             probabilityMatrix = probabilityMatrix,
             onRoiInfo = onRoiInfo
@@ -205,10 +225,22 @@ private fun runDetection(
     manualRoi: ManualRoiCoords?,
     lastTriSpots: Triple<Offset, Offset, Offset>?,
     lastTriSpotsImageSize: Pair<Int, Int>?,
+    lockConfidence: Float,
     limitRegionWorking: WorkingRegion?,
     probabilityMatrix: ProbabilityMatrix32x24?,
     onRoiInfo: ((RoiVisualizationInfo?) -> Unit)?
 ): DetectionResult {
+    val lockPriorRgb = if (lastTriSpots != null && lastTriSpotsImageSize != null) {
+        mapLockPriorToWorking(
+            lastTriSpots = lastTriSpots,
+            lastTriSpotsImageSize = lastTriSpotsImageSize,
+            currentWidth = frame.rotatedBitmap.width,
+            currentHeight = frame.rotatedBitmap.height,
+            workingScale = frame.workingScale
+        )
+    } else {
+        null
+    }
     return when (mode) {
         DetectionMode.ManualRoi -> {
             onRoiInfo?.invoke(null)
@@ -218,7 +250,9 @@ private fun runDetection(
                 tuning = tuning,
                 manualRoi = requireNotNull(manualRoi),
                 limitRegionWorking = limitRegionWorking,
-                probabilityMatrix = probabilityMatrix
+                probabilityMatrix = probabilityMatrix,
+                lockPriorRgb = lockPriorRgb,
+                lockConfidence = lockConfidence
             )
         }
 
@@ -229,6 +263,7 @@ private fun runDetection(
                 tuning = tuning,
                 lastTriSpots = requireNotNull(lastTriSpots),
                 lastTriSpotsImageSize = requireNotNull(lastTriSpotsImageSize),
+                lockConfidence = lockConfidence,
                 limitRegionWorking = limitRegionWorking,
                 probabilityMatrix = probabilityMatrix,
                 onRoiInfo = onRoiInfo
@@ -244,7 +279,9 @@ private fun runDetection(
                 gridSize = tuning.gridSize,
                 limitRegionWorking = limitRegionWorking,
                 probabilityMatrix = probabilityMatrix,
-                tuning = tuning
+                tuning = tuning,
+                lockPriorRgb = lockPriorRgb,
+                lockConfidence = lockConfidence
             )
         }
     }
@@ -307,7 +344,9 @@ private fun detectSpotsInManualRoi(
     tuning: AppTuningSettings,
     manualRoi: ManualRoiCoords,
     limitRegionWorking: WorkingRegion?,
-    probabilityMatrix: ProbabilityMatrix32x24?
+    probabilityMatrix: ProbabilityMatrix32x24?,
+    lockPriorRgb: Triple<Offset, Offset, Offset>? = null,
+    lockConfidence: Float = 0f
 ): DetectionResult {
     val workingWidth = frame.workingBitmap.width
     val workingHeight = frame.workingBitmap.height
@@ -348,7 +387,9 @@ private fun detectSpotsInManualRoi(
             roiTop = roiTop,
             roiRight = roiRight,
             roiBottom = roiBottom
-        )
+        ),
+        lockPriorRgb = lockPriorRgb,
+        lockConfidence = lockConfidence
     )
     return DetectionResult(spots = spots, foundInManualRoi = spots.size == 3)
 }
@@ -359,10 +400,18 @@ private fun detectSpotsWithAdaptiveRoi(
     tuning: AppTuningSettings,
     lastTriSpots: Triple<Offset, Offset, Offset>,
     lastTriSpotsImageSize: Pair<Int, Int>,
+    lockConfidence: Float,
     limitRegionWorking: WorkingRegion?,
     probabilityMatrix: ProbabilityMatrix32x24?,
     onRoiInfo: ((RoiVisualizationInfo?) -> Unit)?
 ): DetectionResult {
+    val lockPriorRgb = mapLockPriorToWorking(
+        lastTriSpots = lastTriSpots,
+        lastTriSpotsImageSize = lastTriSpotsImageSize,
+        currentWidth = frame.rotatedBitmap.width,
+        currentHeight = frame.rotatedBitmap.height,
+        workingScale = frame.workingScale
+    )
     val initialRoiSeed = buildInitialRoiSeed(
         lastTriSpots = lastTriSpots,
         lastTriSpotsImageSize = lastTriSpotsImageSize,
@@ -423,7 +472,9 @@ private fun detectSpotsWithAdaptiveRoi(
                 roiTop = roiBounds.top,
                 roiRight = roiBounds.right,
                 roiBottom = roiBounds.bottom
-            )
+            ),
+            lockPriorRgb = lockPriorRgb,
+            lockConfidence = lockConfidence
         )
 
         val isStable = if (roiSpots.size == 3 && lastTriRadius != null) {
@@ -479,7 +530,9 @@ private fun detectSpotsWithAdaptiveRoi(
             gridSize = tuning.gridSize,
             limitRegionWorking = limitRegionWorking,
             probabilityMatrix = probabilityMatrix,
-            tuning = tuning
+            tuning = tuning,
+            lockPriorRgb = lockPriorRgb,
+            lockConfidence = lockConfidence
         )
     } else {
         finalRoiInfo?.let { info -> onRoiInfo?.invoke(info) }
@@ -514,7 +567,9 @@ private fun detectSpotsGlobally(
     gridSize: Int,
     limitRegionWorking: WorkingRegion?,
     probabilityMatrix: ProbabilityMatrix32x24?,
-    tuning: AppTuningSettings
+    tuning: AppTuningSettings,
+    lockPriorRgb: Triple<Offset, Offset, Offset>? = null,
+    lockConfidence: Float = 0f
 ): DetectionResult {
     val spots = limitRegionWorking?.let {
         detector.detectBrightSpots(
@@ -533,13 +588,17 @@ private fun detectSpotsGlobally(
                 roiTop = it.top,
                 roiRight = it.right,
                 roiBottom = it.bottom
-            )
+            ),
+            lockPriorRgb = lockPriorRgb,
+            lockConfidence = lockConfidence
         )
     } ?: detector.detectBrightSpots(
         bitmap = bitmap,
         threshold = threshold,
         gridSize = gridSize,
-        probabilityMatrix = probabilityMatrix
+        probabilityMatrix = probabilityMatrix,
+        lockPriorRgb = lockPriorRgb,
+        lockConfidence = lockConfidence
     )
     return DetectionResult(spots, foundInManualRoi = false)
 }

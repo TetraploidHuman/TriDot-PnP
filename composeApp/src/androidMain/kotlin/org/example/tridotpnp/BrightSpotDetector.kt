@@ -101,6 +101,11 @@ class BrightSpotDetector {
     @Volatile var calibrationSearchStep: Int = 10
     @Volatile var calibrationSearchRadius: Int = 15
     @Volatile var sampleTopPercent: Float = 0.2f
+    @Volatile var trackSwitchMargin: Float = 0.20f
+    @Volatile var trackLockMaxDistPx: Float = 72f
+    @Volatile var trackLockConfidenceBoost: Float = 2.0f
+    /** Set by the last [detectBrightSpots] call: true if hysteresis kept the prior lock. */
+    @Volatile var lastPreferredTrackLock: Boolean = false
 
     private fun candidateProbWeight(raw: Float): Float {
         val clamped = raw.coerceAtLeast(probabilityWeightFloor)
@@ -222,8 +227,16 @@ class BrightSpotDetector {
         roiBottom: Int? = null,
         probabilityMatrix: ProbabilityMatrix32x24? = null,
         /** When set, use this pixel step (image-aligned) instead of width/gridSize. */
-        sampleStepPx: Int? = null
+        sampleStepPx: Int? = null,
+        /**
+         * Previous-frame RGB lock (image coordinates of this bitmap).
+         * Used for hysteresis so a brighter stray spot cannot easily steal the track.
+         */
+        lockPriorRgb: Triple<Offset, Offset, Offset>? = null,
+        /** 0..1 accumulated multi-frame lock confidence; scales switch margin. */
+        lockConfidence: Float = 0f
     ): List<BrightSpot> {
+        lastPreferredTrackLock = false
 
         val width = bitmap.width
         val height = bitmap.height
@@ -441,6 +454,26 @@ class BrightSpotDetector {
             var bestTripleB: Candidate? = null
             var bestGroupScore = Float.NEGATIVE_INFINITY
 
+            var lockedTripleR: Candidate? = null
+            var lockedTripleG: Candidate? = null
+            var lockedTripleB: Candidate? = null
+            var lockedGroupScore = Float.NEGATIVE_INFINITY
+
+            val lockPrior = lockPriorRgb
+            val lockDist = trackLockMaxDistPx.coerceAtLeast(1f)
+            val lockDist2 = lockDist * lockDist
+            val switchMargin = effectiveTrackSwitchMargin(
+                baseMargin = trackSwitchMargin,
+                confidence = lockConfidence,
+                confidenceBoost = trackLockConfidenceBoost
+            )
+
+            fun nearLock(c: Candidate, prior: Offset): Boolean {
+                val dx = c.x - prior.x
+                val dy = c.y - prior.y
+                return dx * dx + dy * dy <= lockDist2
+            }
+
             for (rC in reds) {
                 for (gC in greens) {
                     val dRG2 = dist2(rC.x, rC.y, gC.x, gC.y)
@@ -499,8 +532,35 @@ class BrightSpotDetector {
                             bestTripleG = gC
                             bestTripleB = bC
                         }
+
+                        if (lockPrior != null &&
+                            nearLock(rC, lockPrior.first) &&
+                            nearLock(gC, lockPrior.second) &&
+                            nearLock(bC, lockPrior.third) &&
+                            weightedGroupScore > lockedGroupScore
+                        ) {
+                            lockedGroupScore = weightedGroupScore
+                            lockedTripleR = rC
+                            lockedTripleG = gC
+                            lockedTripleB = bC
+                        }
                     }
                 }
+            }
+
+            // Hysteresis: keep the locked RGB triple unless a rival is clearly better.
+            val preferLocked = lockedTripleR != null &&
+                lockedTripleG != null &&
+                lockedTripleB != null &&
+                (
+                    switchMargin <= 1e-6f ||
+                        bestGroupScore <= lockedGroupScore * (1f + switchMargin)
+                    )
+            if (preferLocked) {
+                bestTripleR = lockedTripleR
+                bestTripleG = lockedTripleG
+                bestTripleB = lockedTripleB
+                lastPreferredTrackLock = true
             }
 
             if (bestTripleR == null || bestTripleG == null || bestTripleB == null) return emptyList()

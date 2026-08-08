@@ -20,6 +20,22 @@ data class AppTuningSettings(
     val roiStabilityTolerance: Float = 0.3f,
     val roiRecentAttempts: Int = 7,
     val roiFailureThreshold: Int = 4,
+    /**
+     * 已锁定 RGB 三点的基础粘滞裕度：新三角形得分需高出该比例才允许切换。
+     * 实际裕度还会随锁定置信度放大。0 = 关闭粘滞。
+     */
+    val trackSwitchMargin: Float = 0.20f,
+    /** 判定仍是「同一组锁定点」的单色最大像素距离（工作图坐标）。 */
+    val trackLockMaxDistPx: Float = 72f,
+    /** 每连续稳定跟踪一帧，锁定置信度增加多少（0..1）。 */
+    val trackLockConfidenceRise: Float = 0.08f,
+    /** 丢检时每帧锁定置信度衰减多少。 */
+    val trackLockConfidenceDecay: Float = 0.06f,
+    /**
+     * 置信度对粘滞裕度的放大：有效裕度 = 基础 × (1 + boost × confidence)。
+     * 例如 boost=2、confidence=1 时，裕度为基础的 3 倍。
+     */
+    val trackLockConfidenceBoost: Float = 2.0f,
     val refineIterations: Int = 2,
     val refineRadiusMultiplier: Float = 2f,
     val refineMinRadiusPx: Int = 6,

@@ -124,9 +124,9 @@ fun CameraPreview(
     var liveProbabilityMatrix by remember(probabilityMatrix) { mutableStateOf(probabilityMatrix) }
     val forceGlobalSearchRequested = remember { AtomicBoolean(false) }
 
-    // ROI seed for next frame — analyzer-thread AtomicReference (not Compose state)
-    val lastTriSpotsRef = remember { AtomicReference<Triple<Offset, Offset, Offset>?>(null) }
-    val lastTriSpotsImageSizeRef = remember { AtomicReference<Pair<Int, Int>?>(null) }
+    // Multi-frame RGB lock (confidence rises while the same triangle is held)
+    val trackLockRef = remember { AtomicReference<TrackLockState?>(null) }
+    val lockMissFrames = remember { AtomicInteger(0) }
 
     // ROI可视化信息（原图坐标）
     var roiVisualizationInfo by remember { mutableStateOf<RoiVisualizationInfo?>(null) }
@@ -166,11 +166,9 @@ fun CameraPreview(
     val currentOnSpotsAnalyzed = rememberUpdatedState(onSpotsAnalyzed)
     val currentOnBrightSpotsDetected = rememberUpdatedState(onBrightSpotsDetected)
 
-    // ROI优化关闭时清除跟踪状态和可视化信息
+    // ROI可视化关闭时只清 ROI 动画；RGB lock 仍保留给跟踪粘滞
     LaunchedEffect(tuning.enableRoiOptimization) {
         if (!tuning.enableRoiOptimization) {
-            lastTriSpotsRef.set(null)
-            lastTriSpotsImageSizeRef.set(null)
             roiVisualizationInfo = null
         }
     }
@@ -694,14 +692,17 @@ fun CameraPreview(
                                     val currentLimitRegion = limitRegionImageCoords
 
 
+                                    val lockState = trackLockRef.get()
+                                    val tuningNow = currentTuning.value
                                     processImage(
                                         imageProxy = imageProxy,
                                         detector = detector,
-                                        tuning = currentTuning.value,
+                                        tuning = tuningNow,
                                         probabilityMatrix = currentProbabilityMatrix.value,
                                         enableRoiOptimization = currentEnableRoiOptimization.value,
-                                        lastTriSpots = if (currentEnableRoiOptimization.value) lastTriSpotsRef.get() else null,
-                                        lastTriSpotsImageSize = if (currentEnableRoiOptimization.value) lastTriSpotsImageSizeRef.get() else null,
+                                        lastTriSpots = lockState?.rgb,
+                                        lastTriSpotsImageSize = lockState?.imageSize,
+                                        lockConfidence = lockState?.confidence ?: 0f,
                                         manualRoi = currentManualRoi,
                                         limitRegion = currentLimitRegion,
                                         forceGlobalSearch = forceGlobalSearchRequested.getAndSet(false),
@@ -721,38 +722,37 @@ fun CameraPreview(
                                                 }
                                             }
 
-                                            // 仅在启用ROI优化时更新跟踪的三色点位置（分析线程）
-                                            if (currentEnableRoiOptimization.value) {
-                                                if (spots.size == 3) {
-                                                    var redSpot: BrightSpot? = null
-                                                    var greenSpot: BrightSpot? = null
-                                                    var blueSpot: BrightSpot? = null
-                                                    spots.forEach { spot ->
-                                                        when (spot.color) {
-                                                            LedColor.RED -> redSpot = spot
-                                                            LedColor.GREEN -> greenSpot = spot
-                                                            LedColor.BLUE -> blueSpot = spot
-                                                            else -> {}
-                                                        }
-                                                    }
-                                                    if (redSpot != null && greenSpot != null && blueSpot != null) {
-                                                        lastTriSpotsRef.set(
-                                                            Triple(
-                                                                redSpot.position,
-                                                                greenSpot.position,
-                                                                blueSpot.position
-                                                            )
-                                                        )
-                                                        lastTriSpotsImageSizeRef.set(size)
-                                                    } else {
-                                                        lastTriSpotsRef.set(null)
-                                                        lastTriSpotsImageSizeRef.set(null)
-                                                    }
-                                                } else {
-                                                    lastTriSpotsRef.set(null)
-                                                    lastTriSpotsImageSizeRef.set(null)
-                                                }
+                                            val rgb = rgbTripleFromSpots(spots)
+                                            val miss = if (rgb == null) {
+                                                lockMissFrames.incrementAndGet()
+                                            } else {
+                                                lockMissFrames.set(0)
+                                                0
                                             }
+                                            // Map working-space lock distance into original image pixels.
+                                            val imageLockDist = if (size != null) {
+                                                val scale = min(
+                                                    1f,
+                                                    tuningNow.workingMaxDimension.toFloat() /
+                                                        max(size.first, size.second).toFloat()
+                                                )
+                                                tuningNow.trackLockMaxDistPx / scale.coerceAtLeast(0.05f)
+                                            } else {
+                                                tuningNow.trackLockMaxDistPx
+                                            }
+                                            trackLockRef.set(
+                                                advanceTrackLockState(
+                                                    previous = trackLockRef.get(),
+                                                    newRgb = rgb,
+                                                    imageSize = size,
+                                                    preferredExistingLock = detector.lastPreferredTrackLock,
+                                                    imageSpaceLockDistPx = imageLockDist,
+                                                    confidenceRise = tuningNow.trackLockConfidenceRise,
+                                                    confidenceDecay = tuningNow.trackLockConfidenceDecay,
+                                                    missStreak = miss,
+                                                    clearAfterMisses = 12
+                                                )
+                                            )
 
                                             // Tracking / PnP on analyzer thread (same results, less main-thread jank)
                                             val snap = currentOnSpotsAnalyzed.value?.invoke(spots, size)

@@ -68,8 +68,10 @@ internal fun calculateCircumradius(
 
 /**
  * ROI sample step from ideal density + cell budget.
- * Never coarser than the global gridSize step; never finer than [idealStepPx].
- * Large ROIs automatically sparsify via the budget.
+ * Never coarser than the global gridSize step; never denser than [idealStepPx]
+ * (larger step = coarser). Large ROIs automatically sparsify via the budget.
+ * Note: with a dense global grid (e.g. gridSize=256 → step≈5) and idealStep=4,
+ * the usable range is narrow; budget matters more when global step is coarser.
  */
 internal fun resolveRoiSampleStepPx(
     roiWidth: Int,
@@ -241,7 +243,8 @@ private fun runDetection(
                 threshold = tuning.detectionThreshold,
                 gridSize = tuning.gridSize,
                 limitRegionWorking = limitRegionWorking,
-                probabilityMatrix = probabilityMatrix
+                probabilityMatrix = probabilityMatrix,
+                tuning = tuning
             )
         }
     }
@@ -475,7 +478,8 @@ private fun detectSpotsWithAdaptiveRoi(
             threshold = tuning.detectionThreshold,
             gridSize = tuning.gridSize,
             limitRegionWorking = limitRegionWorking,
-            probabilityMatrix = probabilityMatrix
+            probabilityMatrix = probabilityMatrix,
+            tuning = tuning
         )
     } else {
         finalRoiInfo?.let { info -> onRoiInfo?.invoke(info) }
@@ -509,7 +513,8 @@ private fun detectSpotsGlobally(
     threshold: Float,
     gridSize: Int,
     limitRegionWorking: WorkingRegion?,
-    probabilityMatrix: ProbabilityMatrix32x24?
+    probabilityMatrix: ProbabilityMatrix32x24?,
+    tuning: AppTuningSettings
 ): DetectionResult {
     val spots = limitRegionWorking?.let {
         detector.detectBrightSpots(
@@ -520,7 +525,15 @@ private fun detectSpotsGlobally(
             roiTop = it.top,
             roiRight = it.right,
             roiBottom = it.bottom,
-            probabilityMatrix = probabilityMatrix
+            probabilityMatrix = probabilityMatrix,
+            sampleStepPx = tuning.roiSampleStepOrNull(
+                imageWidth = bitmap.width,
+                imageHeight = bitmap.height,
+                roiLeft = it.left,
+                roiTop = it.top,
+                roiRight = it.right,
+                roiBottom = it.bottom
+            )
         )
     } ?: detector.detectBrightSpots(
         bitmap = bitmap,

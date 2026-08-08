@@ -261,6 +261,12 @@ class BrightSpotDetector {
         val maxI: Int
         val maxJ: Int
         val overrideStep = sampleStepPx
+        // Geometry / in-detector refine stay anchored to gridSize so denser ROI
+        // sampling does not silently shrink pair-distance gates or refine windows.
+        val geometryStep = max(
+            ((width + gridSize - 1) / gridSize).coerceAtLeast(1),
+            ((height + gridSize - 1) / gridSize).coerceAtLeast(1)
+        )
         if (overrideStep != null) {
             stepX = overrideStep.coerceAtLeast(1)
             stepY = overrideStep.coerceAtLeast(1)
@@ -298,7 +304,7 @@ class BrightSpotDetector {
         )
 
         fun calcRefineRadius(): Int {
-            val baseRadius = max(stepX, stepY)
+            val baseRadius = geometryStep
             return (baseRadius * 1.5f).toInt()
                 .coerceAtLeast(minRefineRadius)
                 .coerceAtMost(min(searchWidth, searchHeight) / 4)
@@ -307,7 +313,7 @@ class BrightSpotDetector {
         // 三色模式：Top-N 候选 + 三点几何软惩罚 + “纯度加分” 只 refine 3 次
 
             val topN = topNCandidatesPerColor.coerceAtLeast(1)
-            val base = max(stepX, stepY).toFloat()
+            val base = geometryStep.toFloat()
 
             val minPairDist = base * minPairDistanceMultiplier.coerceAtLeast(0.1f)
             val maxPairDist = base * maxPairDistanceMultiplier.coerceAtLeast(minPairDistanceMultiplier.coerceAtLeast(0.1f))

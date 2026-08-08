@@ -571,7 +571,7 @@ private fun DetectionControlSection(
     val haptic = LocalHapticFeedback.current
 
     Text(
-        text = "PRECISION",
+        text = "网格精度",
         color = FlatUiColors.TextMuted,
         style = MaterialTheme.typography.labelSmall,
         modifier = Modifier.padding(top = 4.dp)
@@ -617,7 +617,7 @@ private fun DetectionControlSection(
     }
 
     Text(
-        text = "EXPOSURE",
+        text = "曝光补偿",
         color = FlatUiColors.TextMuted,
         style = MaterialTheme.typography.labelSmall,
         modifier = Modifier.padding(top = 4.dp)
@@ -681,7 +681,7 @@ private fun DetectionControlSection(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "ROI OPTIMIZATION",
+                text = "ROI 优化",
                 color = FlatUiColors.TextMuted,
                 style = MaterialTheme.typography.labelSmall
             )
@@ -702,7 +702,7 @@ private fun DetectionControlSection(
                     contentPadding = PaddingValues(0.dp)
                 ) {
                     Text(
-                        text = if (tuning.enableRoiOptimization) "ON" else "OFF",
+                        text = if (tuning.enableRoiOptimization) "开" else "关",
                         color = if (tuning.enableRoiOptimization) Color.White else Color(0xFF666666),
                         style = MaterialTheme.typography.labelMedium
                     )
@@ -716,7 +716,7 @@ private fun DetectionControlSection(
             color = FlatUiColors.Border
         )
         Text(
-            text = "CALIBRATION",
+            text = "颜色校准",
             color = FlatUiColors.TextMuted,
             style = MaterialTheme.typography.labelSmall
         )
@@ -743,7 +743,7 @@ private fun DetectionControlSection(
                         contentPadding = PaddingValues(0.dp)
                     ) {
                         Text(
-                            text = "? 清除",
+                            text = "清除",
                             color = Color.White,
                             style = MaterialTheme.typography.labelMedium
                         )
@@ -772,7 +772,7 @@ private fun DetectionControlSection(
             color = FlatUiColors.Border
         )
         Text(
-            text = "△ EDGE LENGTH",
+            text = "三角形边长",
             color = FlatUiColors.TextMuted,
             style = MaterialTheme.typography.labelSmall
         )
@@ -855,7 +855,7 @@ private fun StatusSection(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text = "STATUS",
+            text = "状态",
             color = FlatUiColors.TextMuted,
             style = MaterialTheme.typography.labelSmall
         )
@@ -872,7 +872,7 @@ private fun StatusSection(
             ) {}
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "DETECTED",
+                    text = "已检出",
                     color = FlatUiColors.TextMuted,
                     style = MaterialTheme.typography.labelSmall
                 )
@@ -890,7 +890,7 @@ private fun StatusSection(
         ) {
             Column {
                 Text(
-                    text = "GRID",
+                    text = "网格",
                     color = FlatUiColors.TextMuted,
                     style = MaterialTheme.typography.labelSmall
                 )
@@ -903,7 +903,7 @@ private fun StatusSection(
 
             Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    text = "BLOCKS",
+                    text = "格数",
                     color = FlatUiColors.TextMuted,
                     style = MaterialTheme.typography.labelSmall
                 )
@@ -935,7 +935,7 @@ private fun StatusSection(
             ) {
                 Column {
                     Text(
-                        text = "CONFIDENCE",
+                        text = "置信度",
                         color = FlatUiColors.TextMuted,
                         style = MaterialTheme.typography.labelSmall
                     )
@@ -947,12 +947,12 @@ private fun StatusSection(
                 }
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        text = "VISION GATE",
+                        text = "视觉门控",
                         color = FlatUiColors.TextMuted,
                         style = MaterialTheme.typography.labelSmall
                     )
                     Text(
-                        text = if (obs.accepted) "PASS" else "REJECT",
+                        text = if (obs.accepted) "通过" else "拒绝",
                         color = if (obs.accepted) Color(0xFF2CA36B) else Color(0xFFE35D5B),
                         style = MaterialTheme.typography.titleMedium
                     )
@@ -963,15 +963,15 @@ private fun StatusSection(
         if (trackedNodes.isNotEmpty()) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = "NODES ${trackedNodes.size}",
+                    text = "节点 ${trackedNodes.size}",
                     color = FlatUiColors.TextMuted,
                     style = MaterialTheme.typography.labelSmall
                 )
                 trackedNodes.take(6).forEach { node ->
                     val idText = node.nodeId?.toString() ?: "--"
-                    val calib = if (node.needsVisualCalibration) " · NEED VIS" else ""
+                    val calib = if (node.needsVisualCalibration) " · 需视觉校准" else ""
                     Text(
-                        text = "#${node.trackKey} id=$idText conf=${
+                        text = "#${node.trackKey} id=$idText 置信=${
                             "%.0f".format((node.observation?.confidence ?: 0f) * 100f)
                         }%$calib",
                         color = FlatUiColors.TextPrimary,
@@ -983,7 +983,7 @@ private fun StatusSection(
 
         if (tuning.enableBleImu) {
             Text(
-                text = if (bleScanning) "BLE SCAN… ($bleConnectedCount)" else "BLE $bleConnectedCount",
+                text = if (bleScanning) "BLE 扫描中… ($bleConnectedCount)" else "BLE 已连接 $bleConnectedCount",
                 color = if (bleConnectedCount > 0) Color(0xFF2CA36B) else FlatUiColors.TextMuted,
                 style = MaterialTheme.typography.labelMedium
             )
@@ -1002,7 +1002,7 @@ private fun StatusSection(
             ) {
                 Column {
                     Text(
-                        text = "DISTANCE",
+                        text = "距离",
                         color = FlatUiColors.TextMuted,
                         style = MaterialTheme.typography.labelSmall
                     )
@@ -1015,7 +1015,7 @@ private fun StatusSection(
 
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = "AZIMUTH",
+                        text = "方位角",
                         color = FlatUiColors.TextMuted,
                         style = MaterialTheme.typography.labelSmall
                     )
@@ -1028,7 +1028,7 @@ private fun StatusSection(
 
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        text = "ELEVATION",
+                        text = "仰角",
                         color = FlatUiColors.TextMuted,
                         style = MaterialTheme.typography.labelSmall
                     )
@@ -1051,7 +1051,7 @@ private fun StatusSection(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "6DOF POSE",
+                        text = "六自由度位姿",
                         color = FlatUiColors.Accent,
                         style = MaterialTheme.typography.titleSmall
                     )
@@ -1064,7 +1064,7 @@ private fun StatusSection(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = "CENTER",
+                                text = "中心",
                                 color = Color(0xFF95A5A6),
                                 style = MaterialTheme.typography.labelSmall
                             )
@@ -1083,7 +1083,7 @@ private fun StatusSection(
                     )
 
                     Text(
-                        text = "ORIENTATION",
+                        text = "姿态角",
                         color = FlatUiColors.TextMuted,
                         style = MaterialTheme.typography.labelSmall
                     )
@@ -1094,7 +1094,7 @@ private fun StatusSection(
                     ) {
                         Column {
                             Text(
-                                text = "ROLL",
+                                text = "横滚",
                                 color = FlatUiColors.TextMuted,
                                 style = MaterialTheme.typography.labelSmall
                             )
@@ -1107,7 +1107,7 @@ private fun StatusSection(
 
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(
-                                text = "PITCH",
+                                text = "俯仰",
                                 color = FlatUiColors.TextMuted,
                                 style = MaterialTheme.typography.labelSmall
                             )
@@ -1120,7 +1120,7 @@ private fun StatusSection(
 
                         Column(horizontalAlignment = Alignment.End) {
                             Text(
-                                text = "YAW",
+                                text = "偏航",
                                 color = FlatUiColors.TextMuted,
                                 style = MaterialTheme.typography.labelSmall
                             )
@@ -1360,7 +1360,7 @@ private fun SettingsOverviewContent(
 
         SettingsSection(
             title = "视觉融合与多节点",
-            description = "置信度门控、时域身份解码、多节点跟踪、ESKF 稀疏校正与 IK 后处理。"
+            description = "置信度门控、灯语身份解码、多节点跟踪、IMU 稀疏融合与姿态软约束。"
         ) {
             BooleanSettingRow(
                 title = "视觉置信度门控",
@@ -1387,7 +1387,7 @@ private fun SettingsOverviewContent(
                 onValueChange = { onTuningChange(tuning.copy(visionMaxReprojectionErrorMm = it)) }
             )
             BooleanSettingRow(
-                title = "时域身份解码",
+                title = "灯语身份解码",
                 description = "对编码灯亮度序列做同步头相关 + CRC，确认节点 ID。",
                 checked = tuning.enableIdentityDecode,
                 onCheckedChange = { onTuningChange(tuning.copy(enableIdentityDecode = it)) }
@@ -1403,7 +1403,7 @@ private fun SettingsOverviewContent(
             )
             BooleanSettingRow(
                 title = "多节点跟踪",
-                description = "RANSAC 多三角形提取 + 每节点独立 Tracker。",
+                description = "从候选亮点中抽取多个三角形，并为每个节点维护独立跟踪器。",
                 checked = tuning.enableMultiNodeTracking,
                 onCheckedChange = { onTuningChange(tuning.copy(enableMultiNodeTracking = it)) }
             )
@@ -1423,20 +1423,20 @@ private fun SettingsOverviewContent(
                 onCheckedChange = { onTuningChange(tuning.copy(enableTopologyPrior = it)) }
             )
             BooleanSettingRow(
-                title = "ESKF 稀疏融合",
-                description = "IMU 预测 + 高置信视觉更新；协方差过大时提示需要视觉校准。",
+                title = "ESKF 惯性融合",
+                description = "用 IMU 做短时预测，高置信视觉再校正；不确定度过大时提示需要视觉校准。",
                 checked = tuning.enableEskfFusion,
                 onCheckedChange = { onTuningChange(tuning.copy(enableEskfFusion = it)) }
             )
             BooleanSettingRow(
-                title = "IK 软约束",
-                description = "多节点位姿后按骨骼长度做 LM 软约束，消除异常姿态。",
+                title = "IK 姿态软约束",
+                description = "多节点位姿后再按骨骼长度做软约束，压掉明显不合理的姿态。",
                 checked = tuning.enableIkPostProcess,
                 onCheckedChange = { onTuningChange(tuning.copy(enableIkPostProcess = it)) }
             )
             BooleanSettingRow(
                 title = "BLE IMU 接入",
-                description = "扫描名为 TriDot* 的节点并接收 IMU 包（需固件配合）。",
+                description = "扫描名为 TriDot* 的节点并接收 IMU 数据包（需固件配合）。",
                 checked = tuning.enableBleImu,
                 onCheckedChange = { onTuningChange(tuning.copy(enableBleImu = it)) }
             )

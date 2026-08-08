@@ -1,26 +1,28 @@
 # TriDot-PnP
 
-Wearable visual–inertial pose sensing: Android camera app + ESP32-C3 node firmware.
+可穿戴视觉–惯性位姿感知：Android 相机伴侣应用 + ESP32-C3 节点固件。
 
-## Repository layout
+## 仓库结构
 
-| Path | Description |
-|------|-------------|
-| [`composeApp/`](./composeApp) | Android companion app (Compose): RGB LED PnP, multi-node tracking, ESKF, BLE |
-| [`firmware/`](./firmware) | **ESP-IDF** firmware for **ESP32-C3** (dual IMU, LED ID encode, BLE) |
-| [`firmware/micropython/`](./firmware/micropython) | Optional MicroPython LED bring-up script |
+| 路径 | 说明 |
+|------|------|
+| [`composeApp/`](./composeApp) | Android 伴侣应用（Compose）：RGB LED PnP、多节点跟踪、ESKF、BLE |
+| [`firmware/`](./firmware) | **ESP-IDF** 固件（**ESP32-C3**：双 IMU、LED 身份编码、BLE） |
+| [`firmware/micropython/`](./firmware/micropython) | 可选 MicroPython LED 点亮脚本 |
 
-## Android app
+## Android 应用
 
 ```shell
 .\gradlew.bat :composeApp:assembleDebug
 ```
 
-CI builds debug APK on every `main` push. Tagged releases (`v*`) publish installable APKs.
+每次推送到 `main` 时，CI 会构建 debug APK。打标签发布（`v*`）时会产出可安装的 release APK。
 
-## ESP32-C3 firmware
+> 注意：若未配置正式签名密钥，release 包会回退为 debug 签名，适合内测，不适合上架商店。
 
-See [`firmware/README.md`](./firmware/README.md).
+## ESP32-C3 固件
+
+详见 [`firmware/README.md`](./firmware/README.md)。
 
 ```shell
 cd firmware
@@ -28,6 +30,6 @@ idf.py set-target esp32c3
 idf.py build flash monitor
 ```
 
-## Protocol
+## 协议
 
-Shared BLE + LED identity format: [`firmware/PROTOCOL.md`](./firmware/PROTOCOL.md).
+共享 BLE + LED 身份格式：[`firmware/PROTOCOL.md`](./firmware/PROTOCOL.md)。

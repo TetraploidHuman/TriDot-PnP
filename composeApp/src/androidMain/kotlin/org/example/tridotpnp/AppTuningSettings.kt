@@ -7,6 +7,12 @@ data class AppTuningSettings(
     val enableRoiOptimization: Boolean = true,
     val detectionThreshold: Float = 80f,
     val workingMaxDimension: Int = 1280,
+    /** ROI 内按「目标步长 + 格子预算」自适应密度；关闭则 ROI 与全图同用 gridSize。 */
+    val enableRoiBudgetGrid: Boolean = true,
+    /** ROI 内目标采样步长（工作图像素）。越小越密；大 ROI 会被预算自动放宽。 */
+    val roiIdealStepPx: Int = 4,
+    /** 单次 ROI 检测最多扫描的格子数（约），防止大圈时算力爆炸。 */
+    val roiMaxCells: Int = 4096,
     val roiInitialRadiusMultiplier: Float = 2f,
     val roiExpandFactor: Float = 1.3f,
     val roiMaxRadiusRatio: Float = 0.4f,

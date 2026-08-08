@@ -220,7 +220,9 @@ class BrightSpotDetector {
         roiTop: Int? = null,
         roiRight: Int? = null,
         roiBottom: Int? = null,
-        probabilityMatrix: ProbabilityMatrix32x24? = null
+        probabilityMatrix: ProbabilityMatrix32x24? = null,
+        /** When set, use this pixel step (image-aligned) instead of width/gridSize. */
+        sampleStepPx: Int? = null
     ): List<BrightSpot> {
 
         val width = bitmap.width
@@ -254,15 +256,29 @@ class BrightSpotDetector {
             return emptyList()
         }
 
-        // ceil(width / gridSize)，避免右侧/底部漏扫
-        val stepX = ((width + gridSize - 1) / gridSize).coerceAtLeast(1)
-        val stepY = ((height + gridSize - 1) / gridSize).coerceAtLeast(1)
+        val stepX: Int
+        val stepY: Int
+        val maxI: Int
+        val maxJ: Int
+        val overrideStep = sampleStepPx
+        if (overrideStep != null) {
+            stepX = overrideStep.coerceAtLeast(1)
+            stepY = overrideStep.coerceAtLeast(1)
+            maxI = ((width + stepX - 1) / stepX).coerceAtLeast(1)
+            maxJ = ((height + stepY - 1) / stepY).coerceAtLeast(1)
+        } else {
+            // ceil(width / gridSize)，避免右侧/底部漏扫
+            stepX = ((width + gridSize - 1) / gridSize).coerceAtLeast(1)
+            stepY = ((height + gridSize - 1) / gridSize).coerceAtLeast(1)
+            maxI = gridSize
+            maxJ = gridSize
+        }
 
         // 计算网格范围（只遍历 ROI 覆盖到的格子）
         val startI = (searchLeft / stepX).coerceAtLeast(0)
-        val endI = ((searchRight + stepX - 1) / stepX).coerceAtMost(gridSize - 1)
+        val endI = ((searchRight + stepX - 1) / stepX).coerceAtMost(maxI - 1)
         val startJ = (searchTop / stepY).coerceAtLeast(0)
-        val endJ = ((searchBottom + stepY - 1) / stepY).coerceAtMost(gridSize - 1)
+        val endJ = ((searchBottom + stepY - 1) / stepY).coerceAtMost(maxJ - 1)
 
         fun probWeightAt(x: Int, y: Int): Float {
             val w = probabilityMatrix?.weightAtPixel(x, y, width, height) ?: 1f

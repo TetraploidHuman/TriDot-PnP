@@ -66,6 +66,52 @@ internal fun calculateCircumradius(
     return (a * b * c) / (4f * area)
 }
 
+/**
+ * ROI sample step from ideal density + cell budget.
+ * Never coarser than the global gridSize step; never finer than [idealStepPx].
+ * Large ROIs automatically sparsify via the budget.
+ */
+internal fun resolveRoiSampleStepPx(
+    roiWidth: Int,
+    roiHeight: Int,
+    imageWidth: Int,
+    imageHeight: Int,
+    gridSize: Int,
+    idealStepPx: Int,
+    maxCells: Int
+): Int {
+    val gs = gridSize.coerceAtLeast(1)
+    val globalStep = max(
+        ((imageWidth + gs - 1) / gs).coerceAtLeast(1),
+        ((imageHeight + gs - 1) / gs).coerceAtLeast(1)
+    )
+    val ideal = idealStepPx.coerceAtLeast(1)
+    val area = roiWidth.coerceAtLeast(1).toDouble() * roiHeight.coerceAtLeast(1).toDouble()
+    val budget = maxCells.coerceAtLeast(1).toDouble()
+    val budgetStep = kotlin.math.ceil(kotlin.math.sqrt(area / budget)).toInt().coerceAtLeast(1)
+    return max(ideal, budgetStep).coerceAtMost(globalStep)
+}
+
+private fun AppTuningSettings.roiSampleStepOrNull(
+    imageWidth: Int,
+    imageHeight: Int,
+    roiLeft: Int,
+    roiTop: Int,
+    roiRight: Int,
+    roiBottom: Int
+): Int? {
+    if (!enableRoiBudgetGrid) return null
+    return resolveRoiSampleStepPx(
+        roiWidth = (roiRight - roiLeft + 1).coerceAtLeast(1),
+        roiHeight = (roiBottom - roiTop + 1).coerceAtLeast(1),
+        imageWidth = imageWidth,
+        imageHeight = imageHeight,
+        gridSize = gridSize,
+        idealStepPx = roiIdealStepPx,
+        maxCells = roiMaxCells
+    )
+}
+
 internal fun processImage(
     imageProxy: ImageProxy,
     detector: BrightSpotDetector,
@@ -291,7 +337,15 @@ private fun detectSpotsInManualRoi(
         roiTop = roiTop,
         roiRight = roiRight,
         roiBottom = roiBottom,
-        probabilityMatrix = probabilityMatrix
+        probabilityMatrix = probabilityMatrix,
+        sampleStepPx = tuning.roiSampleStepOrNull(
+            imageWidth = workingWidth,
+            imageHeight = workingHeight,
+            roiLeft = roiLeft,
+            roiTop = roiTop,
+            roiRight = roiRight,
+            roiBottom = roiBottom
+        )
     )
     return DetectionResult(spots = spots, foundInManualRoi = spots.size == 3)
 }
@@ -358,7 +412,15 @@ private fun detectSpotsWithAdaptiveRoi(
             roiTop = roiBounds.top,
             roiRight = roiBounds.right,
             roiBottom = roiBounds.bottom,
-            probabilityMatrix = probabilityMatrix
+            probabilityMatrix = probabilityMatrix,
+            sampleStepPx = tuning.roiSampleStepOrNull(
+                imageWidth = workingWidth,
+                imageHeight = workingHeight,
+                roiLeft = roiBounds.left,
+                roiTop = roiBounds.top,
+                roiRight = roiBounds.right,
+                roiBottom = roiBounds.bottom
+            )
         )
 
         val isStable = if (roiSpots.size == 3 && lastTriRadius != null) {

@@ -1446,6 +1446,30 @@ private fun SettingsOverviewContent(
             title = "ROI 搜索",
             description = "控制跟踪目标后的局部搜索范围、扩张速度和失败回退策略。"
         ) {
+            BooleanSettingRow(
+                title = "ROI 预算网格",
+                description = "ROI 内按目标步长加密采样；圈变大时用格子预算自动变稀，且不会粗过全图网格。",
+                checked = tuning.enableRoiBudgetGrid,
+                onCheckedChange = { onTuningChange(tuning.copy(enableRoiBudgetGrid = it)) }
+            )
+            IntSliderSetting(
+                title = "ROI 目标步长",
+                description = "工作图像素间距。越小越密。仅在 ROI 预算网格开启时生效。",
+                value = tuning.roiIdealStepPx,
+                valueText = "${tuning.roiIdealStepPx}px",
+                range = 1..16,
+                step = 1,
+                onValueChange = { onTuningChange(tuning.copy(roiIdealStepPx = it)) }
+            )
+            IntSliderSetting(
+                title = "ROI 格子预算",
+                description = "单次 ROI 扫描最多约多少格。大圈时靠它自动放宽步长，避免算力爆炸。",
+                value = tuning.roiMaxCells,
+                valueText = tuning.roiMaxCells.toString(),
+                range = 512..16384,
+                step = 512,
+                onValueChange = { onTuningChange(tuning.copy(roiMaxCells = it)) }
+            )
             FloatSliderSetting(
                 title = "初始半径倍率",
                 description = "以上一帧三点外接圆半径为基础扩大多少倍作为首个 ROI。",

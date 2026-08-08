@@ -1,7 +1,6 @@
 ﻿package org.example.tridotpnp
 
 import android.graphics.Bitmap
-import android.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.core.graphics.get
 import kotlin.math.abs
@@ -60,6 +59,10 @@ class BrightSpotDetector {
     private val targetBlueHSV = FloatArray(3)
     private var targetsPrepared = false
 
+    // Hot-path scratch (detector is single-consumer on camera analyzer thread)
+    private val hsvScratch = FloatArray(3)
+    private val intensityScratch = FloatArray(3)
+
     // 检测参数 - 可调整以检测微小LED
     var minPixelBrightness: Float = 10f   // 最小像素亮度（用于 sampleColorAt 等处）
     var minTotalBrightness: Float = 20f   // 最小总亮度（区域平均RGB之和）
@@ -101,12 +104,24 @@ class BrightSpotDetector {
 
     private fun candidateProbWeight(raw: Float): Float {
         val clamped = raw.coerceAtLeast(probabilityWeightFloor)
-        return clamped.pow(probabilityCandidateExponent.coerceAtLeast(0f))
+        val exp = probabilityCandidateExponent.coerceAtLeast(0f)
+        return when {
+            exp == 0f -> 1f
+            exp == 1f -> clamped
+            exp == 2f -> clamped * clamped
+            else -> clamped.pow(exp)
+        }
     }
 
     private fun groupProbWeight(rawAverage: Float): Float {
         val clamped = rawAverage.coerceAtLeast(probabilityWeightFloor)
-        return clamped.pow(probabilityGroupExponent.coerceAtLeast(0f))
+        val exp = probabilityGroupExponent.coerceAtLeast(0f)
+        return when {
+            exp == 0f -> 1f
+            exp == 1f -> clamped
+            exp == 2f -> clamped * clamped
+            else -> clamped.pow(exp)
+        }
     }
 
     private fun obtainPixelBuffer(w: Int, h: Int): IntArray {
@@ -133,7 +148,7 @@ class BrightSpotDetector {
     private fun clamp255(v: Float): Int = v.toInt().coerceIn(0, 255)
 
     private fun rgbTripleToHSV(rgb: Triple<Float, Float, Float>, out: FloatArray) {
-        Color.RGBToHSV(clamp255(rgb.first), clamp255(rgb.second), clamp255(rgb.third), out)
+        rgbToHsv(clamp255(rgb.first), clamp255(rgb.second), clamp255(rgb.third), out)
     }
 
     private fun ensureTargetsPrepared() {
@@ -347,19 +362,21 @@ class BrightSpotDetector {
                     val pwRaw = probWeightAt(cx, cy)
                     val pw = candidateProbWeight(pwRaw)
 
-                    val intensities = calculateHSVIntensitiesFast(
+                    val intensitiesOk = calculateHSVIntensitiesFast(
                         pixels = pixels,
                         bmpWidth = searchWidth,
                         bmpHeight = searchHeight,
                         centerX = lx,
                         centerY = ly,
                         radiusX = stepX / 2,
-                        radiusY = stepY / 2
-                    ) ?: continue
+                        radiusY = stepY / 2,
+                        out = intensityScratch
+                    )
+                    if (!intensitiesOk) continue
 
-                    val rI = intensities.first
-                    val gI = intensities.second
-                    val bI = intensities.third
+                    val rI = intensityScratch[0]
+                    val gI = intensityScratch[1]
+                    val bI = intensityScratch[2]
 
                     val best = maxOf(rI, gI, bI) * pw
                     if (best <= threshold) continue
@@ -443,7 +460,8 @@ class BrightSpotDetector {
                         val vCenter = (cr + cg + cb) / (255f * 3f)  // 0..1
 
                         // 偏黑得分：越黑越高
-                        val centerBlackScore = (1f - vCenter).pow(2) * triCenterBlackWeight
+                        val dark = 1f - vCenter
+                        val centerBlackScore = dark * dark * triCenterBlackWeight
 
                         val groupScore =
                             colorScore -
@@ -512,8 +530,9 @@ class BrightSpotDetector {
         centerX: Int,
         centerY: Int,
         radiusX: Int,
-        radiusY: Int
-    ): Triple<Float, Float, Float>? {
+        radiusY: Int,
+        out: FloatArray = intensityScratch
+    ): Boolean {
         val startX = (centerX - radiusX).coerceAtLeast(0)
         val endX = (centerX + radiusX).coerceAtMost(bmpWidth - 1)
         val startY = (centerY - radiusY).coerceAtLeast(0)
@@ -532,7 +551,7 @@ class BrightSpotDetector {
                 if (br > maxBrightness) maxBrightness = br
             }
         }
-        if (maxBrightness <= 0f) return null
+        if (maxBrightness <= 0f) return false
 
         // 2) 动态阈值：只取最亮的一撮像素
         val dynThreshold = max(dynamicThresholdMin, maxBrightness * dynamicThresholdRatio.coerceIn(0.05f, 1f))
@@ -564,7 +583,7 @@ class BrightSpotDetector {
             }
         }
 
-        if (count < minPixelCount) return null
+        if (count < minPixelCount) return false
 
         // 3) 面积过滤：亮像素太多 => 大块亮色
         val regionW = (endX - startX + 1)
@@ -574,14 +593,14 @@ class BrightSpotDetector {
             maxBrightPixelCountMin,
             (regionArea * maxBrightPixelRatio).toInt()
         )
-        if (count > maxAllowed) return null
+        if (count > maxAllowed) return false
 
         // 4) 区域平均颜色 + 总亮度门槛
         val avgR = totalR / count
         val avgG = totalG / count
         val avgB = totalB / count
         val totalBrightness = avgR + avgG + avgB
-        if (totalBrightness < minTotalBrightness) return null
+        if (totalBrightness < minTotalBrightness) return false
 
         // 5) 计算暗背景加权因子
         val darkRatio = darkPixelCount.toFloat() / regionArea  // 越接近1说明周围越暗
@@ -589,8 +608,8 @@ class BrightSpotDetector {
         val weightedBrightness = totalBrightness * (1f + darkBoost * darkRatio)
 
         // 6) 转 HSV，算到三个目标颜色的相似度，再乘加权亮度
-        val hsv = FloatArray(3)
-        Color.RGBToHSV(clamp255(avgR), clamp255(avgG), clamp255(avgB), hsv)
+        val hsv = hsvScratch
+        rgbToHsv(clamp255(avgR), clamp255(avgG), clamp255(avgB), hsv)
 
         val simR = gmmColorModel.blendSimilarity(
             hsvSimilarity(hsv, targetRedHSV), LedColor.RED, hsv[0], hsv[1], hsv[2]
@@ -602,7 +621,10 @@ class BrightSpotDetector {
             hsvSimilarity(hsv, targetBlueHSV), LedColor.BLUE, hsv[0], hsv[1], hsv[2]
         )
 
-        return Triple(simR * weightedBrightness, simG * weightedBrightness, simB * weightedBrightness)
+        out[0] = simR * weightedBrightness
+        out[1] = simG * weightedBrightness
+        out[2] = simB * weightedBrightness
+        return true
     }
 
     // ===== 亮度/颜色计算辅助 =====
@@ -658,7 +680,7 @@ class BrightSpotDetector {
         val endY = (centerY + radius).coerceAtMost(bmpHeight - 1)
 
         val target = if (preferChannel == LedColor.UNKNOWN) null else getTargetHSV(preferChannel)
-        val hsv = FloatArray(3)
+        val hsv = hsvScratch
 
         var sumW = 0f
         var sumX = 0f
@@ -672,7 +694,7 @@ class BrightSpotDetector {
                 val g = ((p shr 8) and 0xFF)
                 val b = (p and 0xFF)
 
-                Color.RGBToHSV(r, g, b, hsv)
+                rgbToHsv(r, g, b, hsv)
 
                 // 权重：相似度 × 亮度（HSV V）
                 val w = if (target != null) {
@@ -839,19 +861,21 @@ class BrightSpotDetector {
                 val dx = (x - centerX).toFloat()
                 if (dx * dx + dy * dy > radiusSq) continue
 
-                val intensities = calculateHSVIntensitiesFast(
+                val intensitiesOk = calculateHSVIntensitiesFast(
                     pixels = pixels,
                     bmpWidth = w,
                     bmpHeight = h,
                     centerX = x,
                     centerY = y,
                     radiusX = sampleRadius,
-                    radiusY = sampleRadius
-                ) ?: continue
+                    radiusY = sampleRadius,
+                    out = intensityScratch
+                )
+                if (!intensitiesOk) continue
 
-                val rI = intensities.first
-                val gI = intensities.second
-                val bI = intensities.third
+                val rI = intensityScratch[0]
+                val gI = intensityScratch[1]
+                val bI = intensityScratch[2]
 
                 if (rI > bestR) {
                     bestR = rI

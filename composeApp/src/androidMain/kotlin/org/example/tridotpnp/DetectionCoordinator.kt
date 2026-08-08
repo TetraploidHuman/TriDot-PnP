@@ -1,5 +1,66 @@
 package org.example.tridotpnp
 
+data class FrameTrackingSnapshot(
+    val trackedNodes: List<TrackedNodeState>,
+    val visionObservation: VisionObservation?,
+    val pnpResult: PnPDistanceCalculator.PnPResult?
+)
+
+/**
+ * Heavy tracking / PnP work intended for the camera analyzer thread.
+ * Must keep the same math as the previous main-thread path.
+ */
+fun computeFrameTracking(
+    detector: BrightSpotDetector,
+    nodeTracker: NodeTrackerManager,
+    pnpCalculator: PnPDistanceCalculator,
+    spots: List<BrightSpot>,
+    imageSize: Pair<Int, Int>,
+    tuning: AppTuningSettings
+): FrameTrackingSnapshot {
+    val extras = if (tuning.enableMultiNodeTracking) {
+        extractExtraTriangles(
+            detector = detector,
+            primarySpots = spots,
+            maxNodes = tuning.maxTrackedNodes
+        )
+    } else {
+        emptyList()
+    }
+    val nodes = nodeTracker.updateFromPrimaryTriple(
+        spots = spots,
+        imageSize = imageSize,
+        tuning = tuning,
+        extraTriples = extras
+    )
+    val primary = selectPrimaryObservation(nodes, spots)
+        ?: buildVisionObservation(
+            spots = spots,
+            imageSize = imageSize,
+            tuning = tuning,
+            pnpCalculator = pnpCalculator
+        )
+    val pnp = if (primary == null || !primary.accepted) {
+        if (!tuning.enableVisionConfidenceGate) {
+            calculateRgbPnpResult(
+                spots = spots,
+                imageSize = imageSize,
+                tuning = tuning,
+                pnpCalculator = pnpCalculator
+            )
+        } else {
+            null
+        }
+    } else {
+        primary.pnp
+    }
+    return FrameTrackingSnapshot(
+        trackedNodes = nodes,
+        visionObservation = primary,
+        pnpResult = pnp
+    )
+}
+
 internal fun BrightSpotDetector.applyTuning(tuning: AppTuningSettings) {
     minPixelBrightness = tuning.minPixelBrightness
     minTotalBrightness = tuning.minTotalBrightness

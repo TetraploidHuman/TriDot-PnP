@@ -60,6 +60,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import androidx.core.graphics.scale
 import kotlin.math.abs
 import kotlin.math.ln
@@ -86,7 +87,12 @@ fun CameraPreview(
     onProbabilityCellSelected: (Pair<Int, Int>?) -> Unit = {},
     detector: BrightSpotDetector,  // 必须在工程中提供实现
     enableRoiOptimization: Boolean = true,  // 是否启用ROI优化
-    onBrightSpotsDetected: (List<BrightSpot>, Pair<Int, Int>?) -> Unit = { _, _ -> },
+    /**
+     * Runs on the camera analyzer thread before UI state is posted.
+     * Use for tracking / PnP so the main thread only applies snapshots.
+     */
+    onSpotsAnalyzed: ((List<BrightSpot>, Pair<Int, Int>) -> FrameTrackingSnapshot?)? = null,
+    onBrightSpotsDetected: (List<BrightSpot>, Pair<Int, Int>?, FrameTrackingSnapshot?) -> Unit = { _, _, _ -> },
     onBitmapCaptured: (Bitmap) -> Unit = {},
     captureBitmapForCalibration: Boolean = false,
     onFpsUpdate: (Float) -> Unit = {},  // 帧率更新回调
@@ -118,9 +124,9 @@ fun CameraPreview(
     var liveProbabilityMatrix by remember(probabilityMatrix) { mutableStateOf(probabilityMatrix) }
     val forceGlobalSearchRequested = remember { AtomicBoolean(false) }
 
-    // 跟踪上一个三色点的三个位置（用于ROI优化）
-    var lastTriSpots by remember { mutableStateOf<Triple<Offset, Offset, Offset>?>(null) }
-    var lastTriSpotsImageSize by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    // ROI seed for next frame — analyzer-thread AtomicReference (not Compose state)
+    val lastTriSpotsRef = remember { AtomicReference<Triple<Offset, Offset, Offset>?>(null) }
+    val lastTriSpotsImageSizeRef = remember { AtomicReference<Pair<Int, Int>?>(null) }
 
     // ROI可视化信息（原图坐标）
     var roiVisualizationInfo by remember { mutableStateOf<RoiVisualizationInfo?>(null) }
@@ -157,13 +163,14 @@ fun CameraPreview(
     val currentEnableRoiOptimization = rememberUpdatedState(tuning.enableRoiOptimization)
     val currentCaptureBitmapForCalibration = rememberUpdatedState(captureBitmapForCalibration)
     val currentTuning = rememberUpdatedState(tuning)
-    var skipFrames by remember { mutableIntStateOf(0) }
+    val currentOnSpotsAnalyzed = rememberUpdatedState(onSpotsAnalyzed)
+    val currentOnBrightSpotsDetected = rememberUpdatedState(onBrightSpotsDetected)
 
     // ROI优化关闭时清除跟踪状态和可视化信息
     LaunchedEffect(tuning.enableRoiOptimization) {
         if (!tuning.enableRoiOptimization) {
-            lastTriSpots = null
-            lastTriSpotsImageSize = null
+            lastTriSpotsRef.set(null)
+            lastTriSpotsImageSizeRef.set(null)
             roiVisualizationInfo = null
         }
     }
@@ -667,10 +674,6 @@ fun CameraPreview(
                         .build()
                         .also { analysis ->
                             analysis.setAnalyzer(cameraExecutor) { imageProxy ->
-                                if (skipFrames > 0) {
-                                    skipFrames -= 1
-                                    imageProxy.close()
-                                } else {
                                     // 计算帧率（线程安全）
                                     val currentTime = System.nanoTime()
                                     val count = frameCount.incrementAndGet()
@@ -697,8 +700,8 @@ fun CameraPreview(
                                         tuning = currentTuning.value,
                                         probabilityMatrix = currentProbabilityMatrix.value,
                                         enableRoiOptimization = currentEnableRoiOptimization.value,
-                                        lastTriSpots = if (currentEnableRoiOptimization.value) lastTriSpots else null,
-                                        lastTriSpotsImageSize = if (currentEnableRoiOptimization.value) lastTriSpotsImageSize else null,
+                                        lastTriSpots = if (currentEnableRoiOptimization.value) lastTriSpotsRef.get() else null,
+                                        lastTriSpotsImageSize = if (currentEnableRoiOptimization.value) lastTriSpotsImageSizeRef.get() else null,
                                         manualRoi = currentManualRoi,
                                         limitRegion = currentLimitRegion,
                                         forceGlobalSearch = forceGlobalSearchRequested.getAndSet(false),
@@ -718,7 +721,7 @@ fun CameraPreview(
                                                 }
                                             }
 
-                                            // 仅在启用ROI优化时更新跟踪的三色点位置（分析线程可读下一帧）
+                                            // 仅在启用ROI优化时更新跟踪的三色点位置（分析线程）
                                             if (currentEnableRoiOptimization.value) {
                                                 if (spots.size == 3) {
                                                     var redSpot: BrightSpot? = null
@@ -733,33 +736,38 @@ fun CameraPreview(
                                                         }
                                                     }
                                                     if (redSpot != null && greenSpot != null && blueSpot != null) {
-                                                        lastTriSpots = Triple(
-                                                            redSpot.position,
-                                                            greenSpot.position,
-                                                            blueSpot.position
+                                                        lastTriSpotsRef.set(
+                                                            Triple(
+                                                                redSpot.position,
+                                                                greenSpot.position,
+                                                                blueSpot.position
+                                                            )
                                                         )
-                                                        lastTriSpotsImageSize = size
+                                                        lastTriSpotsImageSizeRef.set(size)
                                                     } else {
-                                                        lastTriSpots = null
-                                                        lastTriSpotsImageSize = null
+                                                        lastTriSpotsRef.set(null)
+                                                        lastTriSpotsImageSizeRef.set(null)
                                                     }
                                                 } else {
-                                                    lastTriSpots = null
-                                                    lastTriSpotsImageSize = null
+                                                    lastTriSpotsRef.set(null)
+                                                    lastTriSpotsImageSizeRef.set(null)
                                                 }
                                             }
+
+                                            // Tracking / PnP on analyzer thread (same results, less main-thread jank)
+                                            val snap = currentOnSpotsAnalyzed.value?.invoke(spots, size)
+
                                             // Compose state updates must run on main thread.
                                             mainHandler.post {
                                                 brightSpots = spots
                                                 previewSize = size
-                                                onBrightSpotsDetected(spots, size)
+                                                currentOnBrightSpotsDetected.value(spots, size, snap)
                                             }
                                         },
                                         captureBitmapForCalibration = currentCaptureBitmapForCalibration.value,
                                         onBitmapCaptured = onBitmapCaptured
                                     )
                                     imageProxy.close()
-                                }
                             }
                         }
 
@@ -1491,22 +1499,46 @@ fun CameraPreview(
                 val borderColor = Color.White.copy(alpha = 0.58f * gridPreviewAlpha)
 
                 if (stepX > 0f && stepY > 0f) {
-                    for (column in 0..gridSize) {
+                    // Display-only: subsample dense grids so preview doesn't draw 500+ lines.
+                    val drawStep = when {
+                        gridSize <= 64 -> 1
+                        gridSize <= 128 -> 2
+                        else -> max(1, gridSize / 64)
+                    }
+                    for (column in 0..gridSize step drawStep) {
                         val x = stepX * column
+                        val isBorder = column == 0 || column == gridSize
                         drawLine(
-                            color = if (column == 0 || column == gridSize) borderColor else gridColor,
+                            color = if (isBorder) borderColor else gridColor,
                             start = Offset(x, 0f),
                             end = Offset(x, displayedHeight),
-                            strokeWidth = if (column == 0 || column == gridSize) 1.5f else 1f
+                            strokeWidth = if (isBorder) 1.5f else 1f
                         )
                     }
-                    for (row in 0..gridSize) {
-                        val y = stepY * row
+                    if (gridSize % drawStep != 0) {
                         drawLine(
-                            color = if (row == 0 || row == gridSize) borderColor else gridColor,
+                            color = borderColor,
+                            start = Offset(displayedWidth, 0f),
+                            end = Offset(displayedWidth, displayedHeight),
+                            strokeWidth = 1.5f
+                        )
+                    }
+                    for (row in 0..gridSize step drawStep) {
+                        val y = stepY * row
+                        val isBorder = row == 0 || row == gridSize
+                        drawLine(
+                            color = if (isBorder) borderColor else gridColor,
                             start = Offset(0f, y),
                             end = Offset(displayedWidth, y),
-                            strokeWidth = if (row == 0 || row == gridSize) 1.5f else 1f
+                            strokeWidth = if (isBorder) 1.5f else 1f
+                        )
+                    }
+                    if (gridSize % drawStep != 0) {
+                        drawLine(
+                            color = borderColor,
+                            start = Offset(0f, displayedHeight),
+                            end = Offset(displayedWidth, displayedHeight),
+                            strokeWidth = 1.5f
                         )
                     }
                 }

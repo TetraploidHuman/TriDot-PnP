@@ -126,7 +126,11 @@ class BleImuClient(private val context: Context) {
         val gx = buf.float
         val gy = buf.float
         val gz = buf.float
-        val ts = buf.int.toLong() and 0xFFFFFFFFL
+        val ts = if (bytes.size >= 32) {
+            buf.int.toLong() and 0xFFFFFFFFL
+        } else {
+            0L
+        }
         return ImuSample(
             nodeId = if (nodeId != 0) nodeId else fallbackNodeId,
             ax = ax,

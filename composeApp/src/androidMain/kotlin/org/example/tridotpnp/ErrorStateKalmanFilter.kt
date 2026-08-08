@@ -54,26 +54,27 @@ class ErrorStateKalmanFilter(
         val dt = ((sample.timestampMs - last).coerceAtLeast(1)).toFloat() / 1000f
         if (dt <= 0f || dt > 0.5f) return
 
-        // Gyro inputs are degrees/second (firmware convention).
-        val gx = Math.toRadians((sample.gx - nominal.gyroBias.x).toDouble()).toFloat()
-        val gy = Math.toRadians((sample.gy - nominal.gyroBias.y).toDouble()).toFloat()
-        val gz = Math.toRadians((sample.gz - nominal.gyroBias.z).toDouble()).toFloat()
+        // Gyro inputs are degrees/second (firmware convention). Keep work in degrees
+        // to avoid repeated rad/deg conversions (same numeric result as before).
+        val gxDeg = sample.gx - nominal.gyroBias.x
+        val gyDeg = sample.gy - nominal.gyroBias.y
+        val gzDeg = sample.gz - nominal.gyroBias.z
 
-        val roll = nominal.rollDeg + Math.toDegrees(gx * dt.toDouble()).toFloat()
-        val pitch = nominal.pitchDeg + Math.toDegrees(gy * dt.toDouble()).toFloat()
-        val yaw = nominal.yawDeg + Math.toDegrees(gz * dt.toDouble()).toFloat()
+        val roll = nominal.rollDeg + gxDeg * dt
+        val pitch = nominal.pitchDeg + gyDeg * dt
+        val yaw = nominal.yawDeg + gzDeg * dt
 
         // Gravity-compensated accel in a simplified navigation frame.
         val ax = sample.ax - nominal.accelBias.x
         val ay = sample.ay - nominal.accelBias.y
         val az = sample.az - nominal.accelBias.z - 9.81f
 
-        val rr = Math.toRadians(roll.toDouble())
-        val pp = Math.toRadians(pitch.toDouble())
-        val yy = Math.toRadians(yaw.toDouble())
-        val cr = cos(rr).toFloat(); val sr = sin(rr).toFloat()
-        val cp = cos(pp).toFloat(); val sp = sin(pp).toFloat()
-        val cy = cos(yy).toFloat(); val sy = sin(yy).toFloat()
+        val rr = roll * DEG_TO_RAD
+        val pp = pitch * DEG_TO_RAD
+        val yy = yaw * DEG_TO_RAD
+        val cr = cos(rr); val sr = sin(rr)
+        val cp = cos(pp); val sp = sin(pp)
+        val cy = cos(yy); val sy = sin(yy)
 
         // Body -> world (ZYX)
         val fx = cy * cp * ax + (cy * sp * sr - sy * cr) * ay + (cy * sp * cr + sy * sr) * az
@@ -88,12 +89,14 @@ class ErrorStateKalmanFilter(
         val py = nominal.position.y + vy * dt
         val pz = nominal.position.z + vz * dt
 
-        nominal = nominal.copy(
+        nominal = EskfState(
             position = PnPDistanceCalculator.Point3D(px, py, pz),
             velocity = PnPDistanceCalculator.Point3D(vx, vy, vz),
             rollDeg = roll,
             pitchDeg = pitch,
-            yawDeg = yaw
+            yawDeg = yaw,
+            accelBias = nominal.accelBias,
+            gyroBias = nominal.gyroBias
         )
 
         // Covariance random-walk growth (sparse, diagonal).
@@ -181,5 +184,9 @@ class ErrorStateKalmanFilter(
         while (d > 180f) d -= 360f
         while (d < -180f) d += 360f
         return d
+    }
+
+    companion object {
+        private const val DEG_TO_RAD = (Math.PI / 180.0).toFloat()
     }
 }

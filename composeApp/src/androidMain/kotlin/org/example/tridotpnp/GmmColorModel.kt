@@ -41,18 +41,31 @@ data class ColorGmm(
     val components: List<GaussianHsv>
 ) {
     fun posterior(h: Float, s: Float, v: Float): Float {
-        if (components.isEmpty()) return 0f
+        val n = components.size
+        if (n == 0) return 0f
+        // Avoid per-call FloatArray: GMMs here are 2–3 components.
         var maxLog = Float.NEGATIVE_INFINITY
-        val logs = FloatArray(components.size)
-        for (i in components.indices) {
+        var log0 = 0f
+        var log1 = 0f
+        var log2 = 0f
+        for (i in 0 until n) {
             val c = components[i]
             val log = kotlin.math.ln(c.weight.coerceAtLeast(1e-6f).toDouble()).toFloat() +
                 c.logPdf(h, s, v)
-            logs[i] = log
+            when (i) {
+                0 -> log0 = log
+                1 -> log1 = log
+                else -> log2 = log
+            }
             if (log > maxLog) maxLog = log
         }
         var sum = 0f
-        for (log in logs) {
+        for (i in 0 until n) {
+            val log = when (i) {
+                0 -> log0
+                1 -> log1
+                else -> log2
+            }
             sum += exp((log - maxLog).toDouble()).toFloat()
         }
         // Softmax mass of all components relative to a uniform fallback.
@@ -102,7 +115,7 @@ class GmmColorModel {
 
     private fun fitSlot(rgb: Triple<Float, Float, Float>, fallbackHue: Float): ColorGmm {
         val hsv = FloatArray(3)
-        android.graphics.Color.RGBToHSV(
+        rgbToHsv(
             rgb.first.toInt().coerceIn(0, 255),
             rgb.second.toInt().coerceIn(0, 255),
             rgb.third.toInt().coerceIn(0, 255),

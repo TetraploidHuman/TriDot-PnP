@@ -70,11 +70,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import android.os.Build
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.rememberUpdatedState
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
 import com.google.accompanist.permissions.rememberPermissionState
 import com.google.accompanist.permissions.shouldShowRationale
+import kotlinx.coroutines.flow.collectLatest
 
 @Composable
 @Preview
@@ -126,9 +128,9 @@ fun BrightSpotDetectionApp(
     val detector = remember { BrightSpotDetector() }
     val nodeTracker = remember { NodeTrackerManager(pnpCalculator) }
     val bleClient = remember { BleImuClient(context.applicationContext) }
-    val bleSample by bleClient.samples.collectAsState()
     val bleConnected by bleClient.connectedDevices.collectAsState()
     val bleScanning by bleClient.scanning.collectAsState()
+    val currentTuning = rememberUpdatedState(tuning)
 
     val blePermissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         listOf(
@@ -158,10 +160,11 @@ fun BrightSpotDetectionApp(
         }
     }
 
-    LaunchedEffect(bleSample) {
-        val sample = bleSample ?: return@LaunchedEffect
-        if (tuning.enableEskfFusion) {
-            nodeTracker.onImu(sample)
+    LaunchedEffect(tuning.enableBleImu, tuning.enableEskfFusion) {
+        if (!tuning.enableBleImu || !tuning.enableEskfFusion) return@LaunchedEffect
+        bleClient.samples.collectLatest { sample ->
+            val s = sample ?: return@collectLatest
+            nodeTracker.onImu(s)
         }
     }
 
@@ -197,7 +200,17 @@ fun BrightSpotDetectionApp(
                                 onFpsUpdate = { newFps ->
                                     fps = newFps
                                 },
-                                onBrightSpotsDetected = { spots, size ->
+                                onSpotsAnalyzed = { spots, size ->
+                                    computeFrameTracking(
+                                        detector = detector,
+                                        nodeTracker = nodeTracker,
+                                        pnpCalculator = pnpCalculator,
+                                        spots = spots,
+                                        imageSize = size,
+                                        tuning = currentTuning.value
+                                    )
+                                },
+                                onBrightSpotsDetected = { spots, size, snap ->
                                     detectedSpotsCount = spots.size
                                     detectedSpots = spots
                                     imageSize = size
@@ -206,44 +219,9 @@ fun BrightSpotDetectionApp(
                                         visionObservation = null
                                         trackedNodes = emptyList()
                                     } else {
-                                    val extras = if (tuning.enableMultiNodeTracking) {
-                                        extractExtraTriangles(
-                                            detector = detector,
-                                            primarySpots = spots,
-                                            maxNodes = tuning.maxTrackedNodes
-                                        )
-                                    } else {
-                                        emptyList()
-                                    }
-                                    val nodes = nodeTracker.updateFromPrimaryTriple(
-                                        spots = spots,
-                                        imageSize = size,
-                                        tuning = tuning,
-                                        extraTriples = extras
-                                    )
-                                    trackedNodes = nodes
-                                    val primary = selectPrimaryObservation(nodes, spots)
-                                        ?: buildVisionObservation(
-                                            spots = spots,
-                                            imageSize = size,
-                                            tuning = tuning,
-                                            pnpCalculator = pnpCalculator
-                                        )
-                                    visionObservation = primary
-                                    pnpResult = if (primary == null || !primary.accepted) {
-                                        if (!tuning.enableVisionConfidenceGate) {
-                                            calculateRgbPnpResult(
-                                                spots = spots,
-                                                imageSize = size,
-                                                tuning = tuning,
-                                                pnpCalculator = pnpCalculator
-                                            )
-                                        } else {
-                                            null
-                                        }
-                                    } else {
-                                        primary.pnp
-                                    }
+                                        trackedNodes = snap?.trackedNodes ?: emptyList()
+                                        visionObservation = snap?.visionObservation
+                                        pnpResult = snap?.pnpResult
                                     }
                                 },
                                 onBitmapCaptured = { bitmap ->

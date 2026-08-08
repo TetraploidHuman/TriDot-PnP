@@ -48,29 +48,35 @@ class NodeTrackerManager(
     var identityConfirmNeeded: Int = 3
 
     fun configure(tuning: AppTuningSettings) {
-        edgeLengthMm = tuning.knownTriangleEdgeLengthMm
-        visionMinConfidence = tuning.visionMinConfidence
-        visionMaxReprojectionErrorMm = tuning.visionMaxReprojectionErrorMm
-        enableIdentityDecode = tuning.enableIdentityDecode
-        enableTopologyPrior = tuning.enableTopologyPrior
-        enableEskfFusion = tuning.enableEskfFusion
-        enableIkPostProcess = tuning.enableIkPostProcess
-        enableVisionGate = tuning.enableVisionConfidenceGate
-        maxNodes = tuning.maxTrackedNodes.coerceIn(1, 17)
-        identityConfirmNeeded = tuning.identityConfirmNeeded.coerceIn(1, 10)
+        synchronized(this) {
+            edgeLengthMm = tuning.knownTriangleEdgeLengthMm
+            visionMinConfidence = tuning.visionMinConfidence
+            visionMaxReprojectionErrorMm = tuning.visionMaxReprojectionErrorMm
+            enableIdentityDecode = tuning.enableIdentityDecode
+            enableTopologyPrior = tuning.enableTopologyPrior
+            enableEskfFusion = tuning.enableEskfFusion
+            enableIkPostProcess = tuning.enableIkPostProcess
+            enableVisionGate = tuning.enableVisionConfidenceGate
+            maxNodes = tuning.maxTrackedNodes.coerceIn(1, 17)
+            identityConfirmNeeded = tuning.identityConfirmNeeded.coerceIn(1, 10)
+        }
     }
 
     fun reset() {
-        tracks.clear()
-        nextKey = 1
+        synchronized(this) {
+            tracks.clear()
+            nextKey = 1
+        }
     }
 
     fun onImu(sample: ImuSample) {
-        if (!enableEskfFusion) return
-        val track = tracks.firstOrNull { it.acceptedNodeId == sample.nodeId }
-            ?: tracks.firstOrNull { it.lastObs?.nodeId == sample.nodeId }
-            ?: return
-        track.eskf.predict(sample)
+        synchronized(this) {
+            if (!enableEskfFusion) return
+            val track = tracks.firstOrNull { it.acceptedNodeId == sample.nodeId }
+                ?: tracks.firstOrNull { it.lastObs?.nodeId == sample.nodeId }
+                ?: return
+            track.eskf.predict(sample)
+        }
     }
 
     fun updateFromPrimaryTriple(
@@ -80,19 +86,32 @@ class NodeTrackerManager(
         extraTriples: List<DetectedTriangle> = emptyList(),
         timestampMs: Long = System.currentTimeMillis()
     ): List<TrackedNodeState> {
-        configure(tuning)
-        val triples = mutableListOf<DetectedTriangle>()
-        if (spots.size == 3) {
-            val center = Offset(
-                (spots[0].position.x + spots[1].position.x + spots[2].position.x) / 3f,
-                (spots[0].position.y + spots[1].position.y + spots[2].position.y) / 3f
-            )
-            triples += DetectedTriangle(spots, score = 1f, center = center)
+        synchronized(this) {
+            // configure already holds lock; call body fields directly
+            edgeLengthMm = tuning.knownTriangleEdgeLengthMm
+            visionMinConfidence = tuning.visionMinConfidence
+            visionMaxReprojectionErrorMm = tuning.visionMaxReprojectionErrorMm
+            enableIdentityDecode = tuning.enableIdentityDecode
+            enableTopologyPrior = tuning.enableTopologyPrior
+            enableEskfFusion = tuning.enableEskfFusion
+            enableIkPostProcess = tuning.enableIkPostProcess
+            enableVisionGate = tuning.enableVisionConfidenceGate
+            maxNodes = tuning.maxTrackedNodes.coerceIn(1, 17)
+            identityConfirmNeeded = tuning.identityConfirmNeeded.coerceIn(1, 10)
+
+            val triples = mutableListOf<DetectedTriangle>()
+            if (spots.size == 3) {
+                val center = Offset(
+                    (spots[0].position.x + spots[1].position.x + spots[2].position.x) / 3f,
+                    (spots[0].position.y + spots[1].position.y + spots[2].position.y) / 3f
+                )
+                triples += DetectedTriangle(spots, score = 1f, center = center)
+            }
+            if (tuning.enableMultiNodeTracking) {
+                triples += extraTriples
+            }
+            return finalize(updateTriples(triples, imageSize, tuning, timestampMs))
         }
-        if (tuning.enableMultiNodeTracking) {
-            triples += extraTriples
-        }
-        return finalize(updateTriples(triples, imageSize, tuning, timestampMs))
     }
 
     private fun updateTriples(

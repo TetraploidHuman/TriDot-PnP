@@ -8,7 +8,6 @@ import androidx.core.graphics.scale
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.pow
 import kotlin.math.sqrt
 
 internal data class RoiRange(val left: Int, val top: Int, val right: Int, val bottom: Int)
@@ -518,6 +517,20 @@ private fun recyclePreparedFrame(originalBitmap: Bitmap, frame: PreparedFrame) {
     originalBitmap.recycle()
 }
 
+private object FrameScratch {
+    var refinePixels: IntArray? = null
+
+    fun obtainRefinePixels(size: Int): IntArray {
+        val cur = refinePixels
+        if (cur == null || cur.size < size) {
+            val grown = IntArray(size)
+            refinePixels = grown
+            return grown
+        }
+        return cur
+    }
+}
+
 private fun refineSpotsOnOriginal(
     bitmap: Bitmap,
     spots: List<BrightSpot>,
@@ -530,8 +543,11 @@ private fun refineSpotsOnOriginal(
     val radius = (step * tuning.refineRadiusMultiplier).toInt()
         .coerceAtLeast(tuning.refineMinRadiusPx)
         .coerceAtMost(min(width, height) / 6)
+    val backgroundDarkness = tuning.refineBackgroundDarkness
+    val sigmaFactor = tuning.refineGaussianSigmaFactor.coerceAtLeast(0.1f)
+    val iterations = tuning.refineIterations.coerceAtLeast(1)
 
-    fun weightFor(pixel: Int, prefer: LedColor, backgroundDarkness: Float = 0.5f): Float {
+    fun weightFor(pixel: Int, prefer: LedColor): Float {
         val r = ((pixel shr 16) and 0xFF).toFloat()
         val g = ((pixel shr 8) and 0xFF).toFloat()
         val b = (pixel and 0xFF).toFloat()
@@ -544,14 +560,15 @@ private fun refineSpotsOnOriginal(
         }
 
         val v = (r + g + b) / (255f * 3f)
-        val backgroundScore = (1f - v).pow(2) * backgroundDarkness
+        val dark = 1f - v
+        val backgroundScore = dark * dark * backgroundDarkness
         return colorScore * (1f + backgroundScore)
     }
 
     fun refineOne(cx: Float, cy: Float, prefer: LedColor): Offset {
         var centerX = cx
         var centerY = cy
-        repeat(tuning.refineIterations.coerceAtLeast(1)) {
+        repeat(iterations) {
             val x0 = (centerX - radius).toInt().coerceAtLeast(0)
             val y0 = (centerY - radius).toInt().coerceAtLeast(0)
             val x1 = (centerX + radius).toInt().coerceAtMost(width - 1)
@@ -559,24 +576,19 @@ private fun refineSpotsOnOriginal(
             val wRect = x1 - x0 + 1
             val hRect = y1 - y0 + 1
             if (wRect <= 0 || hRect <= 0) return@repeat
-            val buf = IntArray(wRect * hRect)
+            val buf = FrameScratch.obtainRefinePixels(wRect * hRect)
             bitmap.getPixels(buf, 0, wRect, x0, y0, wRect, hRect)
             var sumW = 0f
             var sumX = 0f
             var sumY = 0f
             val radF = radius.toFloat()
-            val sigmaFactor = tuning.refineGaussianSigmaFactor.coerceAtLeast(0.1f)
             val invTwoSigma2 = 1f / (2f * (radF * sigmaFactor) * (radF * sigmaFactor))
             for (yy in 0 until hRect) {
                 val row = yy * wRect
                 val yAbs = (y0 + yy).toFloat()
                 for (xx in 0 until wRect) {
                     val xAbs = (x0 + xx).toFloat()
-                    val w = weightFor(
-                        buf[row + xx],
-                        prefer,
-                        backgroundDarkness = tuning.refineBackgroundDarkness
-                    )
+                    val w = weightFor(buf[row + xx], prefer)
                     if (w <= 0f) continue
                     val dx = xAbs - centerX
                     val dy = yAbs - centerY

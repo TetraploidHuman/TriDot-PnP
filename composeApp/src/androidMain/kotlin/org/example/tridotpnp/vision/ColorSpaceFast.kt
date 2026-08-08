@@ -1,5 +1,7 @@
-package org.example.tridotpnp
+package org.example.tridotpnp.vision
 
+
+import org.example.tridotpnp.config.AppTuningSettings
 /**
  * Inline RGB→HSV matching [android.graphics.Color.RGBToHSV] exactly,
  * without JNI per-call overhead. Outputs H in [0,360), S/V in [0,1].

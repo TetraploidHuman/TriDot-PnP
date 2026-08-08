@@ -1,6 +1,8 @@
-package org.example.tridotpnp
+package org.example.tridotpnp.tracking
 
 import androidx.compose.ui.geometry.Offset
+import org.example.tridotpnp.vision.BrightSpot
+import org.example.tridotpnp.vision.LedColor
 import kotlin.math.abs
 import kotlin.math.sqrt
 import kotlin.random.Random

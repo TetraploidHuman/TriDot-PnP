@@ -1,4 +1,4 @@
-﻿package org.example.tridotpnp
+package org.example.tridotpnp.config
 
 data class ProbabilityMatrix32x24(
     val values: FloatArray

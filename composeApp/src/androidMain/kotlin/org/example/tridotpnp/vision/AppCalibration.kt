@@ -1,5 +1,7 @@
-package org.example.tridotpnp
+package org.example.tridotpnp.vision
 
+
+import org.example.tridotpnp.config.AppTuningSettings
 import android.graphics.Bitmap
 import android.util.Log
 import androidx.compose.foundation.layout.PaddingValues

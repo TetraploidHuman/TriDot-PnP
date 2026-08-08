@@ -1,6 +1,8 @@
-package org.example.tridotpnp
+package org.example.tridotpnp.tracking
 
 import androidx.compose.ui.geometry.Offset
+import org.example.tridotpnp.vision.BrightSpot
+import org.example.tridotpnp.vision.LedColor
 import kotlin.math.sqrt
 
 /**
@@ -14,17 +16,6 @@ data class TrackLockState(
     /** 0..1 accumulated lock confidence from consecutive stable frames. */
     val confidence: Float = 0f
 )
-
-internal fun effectiveTrackSwitchMargin(
-    baseMargin: Float,
-    confidence: Float,
-    confidenceBoost: Float
-): Float {
-    val base = baseMargin.coerceAtLeast(0f)
-    val conf = confidence.coerceIn(0f, 1f)
-    val boost = confidenceBoost.coerceAtLeast(0f)
-    return base * (1f + boost * conf)
-}
 
 internal fun rgbTripleFromSpots(spots: List<BrightSpot>): Triple<Offset, Offset, Offset>? {
     var red: Offset? = null

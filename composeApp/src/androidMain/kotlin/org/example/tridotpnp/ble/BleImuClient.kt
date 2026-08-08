@@ -1,5 +1,7 @@
-package org.example.tridotpnp
+package org.example.tridotpnp.ble
 
+
+import org.example.tridotpnp.tracking.ImuSample
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice

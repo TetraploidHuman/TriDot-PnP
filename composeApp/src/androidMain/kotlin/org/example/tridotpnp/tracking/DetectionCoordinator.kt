@@ -1,5 +1,10 @@
-package org.example.tridotpnp
+package org.example.tridotpnp.tracking
 
+import org.example.tridotpnp.config.AppTuningSettings
+import org.example.tridotpnp.vision.BrightSpot
+import org.example.tridotpnp.vision.BrightSpotDetector
+import org.example.tridotpnp.vision.ColorCandidatePools
+import org.example.tridotpnp.vision.LedColor
 data class FrameTrackingSnapshot(
     val trackedNodes: List<TrackedNodeState>,
     val visionObservation: VisionObservation?,
@@ -11,18 +16,18 @@ data class FrameTrackingSnapshot(
  * Must keep the same math as the previous main-thread path.
  */
 fun computeFrameTracking(
-    detector: BrightSpotDetector,
     nodeTracker: NodeTrackerManager,
     pnpCalculator: PnPDistanceCalculator,
     spots: List<BrightSpot>,
     imageSize: Pair<Int, Int>,
-    tuning: AppTuningSettings
+    tuning: AppTuningSettings,
+    candidates: ColorCandidatePools = ColorCandidatePools()
 ): FrameTrackingSnapshot {
-    val extras = if (tuning.enableMultiNodeTracking) {
+    val extras = if (tuning.fusion.enableMultiNodeTracking) {
         extractExtraTriangles(
-            detector = detector,
+            candidates = candidates,
             primarySpots = spots,
-            maxNodes = tuning.maxTrackedNodes
+            maxNodes = tuning.fusion.maxTrackedNodes
         )
     } else {
         emptyList()
@@ -41,7 +46,7 @@ fun computeFrameTracking(
             pnpCalculator = pnpCalculator
         )
     val pnp = if (primary == null || !primary.accepted) {
-        if (!tuning.enableVisionConfidenceGate) {
+        if (!tuning.fusion.enableVisionConfidenceGate) {
             calculateRgbPnpResult(
                 spots = spots,
                 imageSize = imageSize,
@@ -62,49 +67,49 @@ fun computeFrameTracking(
 }
 
 internal fun BrightSpotDetector.applyTuning(tuning: AppTuningSettings) {
-    minPixelBrightness = tuning.minPixelBrightness
-    minTotalBrightness = tuning.minTotalBrightness
-    dynamicThresholdMin = tuning.dynamicThresholdMin
-    dynamicThresholdRatio = tuning.dynamicThresholdRatio
-    minPixelCount = tuning.minPixelCount
-    minRefineRadius = tuning.detectorMinRefineRadius
-    maxBrightPixelRatio = tuning.maxBrightPixelRatio
-    maxBrightPixelCountMin = tuning.maxBrightPixelCountMin
-    hsvMinSaturation = tuning.hsvMinSaturation
-    hsvMinValue = tuning.hsvMinValue
-    hsvHueWeight = tuning.hsvHueWeight
-    hsvSatWeight = tuning.hsvSatWeight
-    hsvValWeight = tuning.hsvValWeight
-    hsvSharpness = tuning.hsvSharpness
-    triShapePenaltyWeight = tuning.triShapePenaltyWeight
-    triGeometryPenaltyWeight = tuning.triGeometryPenaltyWeight
-    triPurityBoostWeight = tuning.triPurityBoostWeight
-    triCenterBlackWeight = tuning.triCenterBlackWeight
-    triColorScoreWeight = tuning.triColorScoreWeight
-    topNCandidatesPerColor = tuning.topNCandidatesPerColor
-    minPairDistanceMultiplier = tuning.minPairDistanceMultiplier
-    maxPairDistanceMultiplier = tuning.maxPairDistanceMultiplier
-    darkBackgroundBoost = tuning.darkBackgroundBoost
-    probabilityCandidateExponent = tuning.probabilityCandidateExponent
-    probabilityGroupExponent = tuning.probabilityGroupExponent
-    probabilityWeightFloor = tuning.probabilityWeightFloor
-    calibrationSearchStep = tuning.calibrationSearchStep
-    calibrationSearchRadius = tuning.calibrationSearchRadius
-    sampleTopPercent = tuning.sampleTopPercent
-    trackSwitchMargin = tuning.trackSwitchMargin
-    trackLockMaxDistPx = tuning.trackLockMaxDistPx
-    trackLockConfidenceBoost = tuning.trackLockConfidenceBoost
-    gmmColorModel.enabled = tuning.enableGmmSoftSegment
-    gmmColorModel.blend = tuning.gmmBlend
+    minPixelBrightness = tuning.detect.minPixelBrightness
+    minTotalBrightness = tuning.detect.minTotalBrightness
+    dynamicThresholdMin = tuning.detect.dynamicThresholdMin
+    dynamicThresholdRatio = tuning.detect.dynamicThresholdRatio
+    minPixelCount = tuning.detect.minPixelCount
+    minRefineRadius = tuning.detect.detectorMinRefineRadius
+    maxBrightPixelRatio = tuning.detect.maxBrightPixelRatio
+    maxBrightPixelCountMin = tuning.detect.maxBrightPixelCountMin
+    hsvMinSaturation = tuning.detect.hsvMinSaturation
+    hsvMinValue = tuning.detect.hsvMinValue
+    hsvHueWeight = tuning.detect.hsvHueWeight
+    hsvSatWeight = tuning.detect.hsvSatWeight
+    hsvValWeight = tuning.detect.hsvValWeight
+    hsvSharpness = tuning.detect.hsvSharpness
+    triShapePenaltyWeight = tuning.detect.triShapePenaltyWeight
+    triGeometryPenaltyWeight = tuning.detect.triGeometryPenaltyWeight
+    triPurityBoostWeight = tuning.detect.triPurityBoostWeight
+    triCenterBlackWeight = tuning.detect.triCenterBlackWeight
+    triColorScoreWeight = tuning.detect.triColorScoreWeight
+    topNCandidatesPerColor = tuning.detect.topNCandidatesPerColor
+    minPairDistanceMultiplier = tuning.detect.minPairDistanceMultiplier
+    maxPairDistanceMultiplier = tuning.detect.maxPairDistanceMultiplier
+    darkBackgroundBoost = tuning.detect.darkBackgroundBoost
+    probabilityCandidateExponent = tuning.detect.probabilityCandidateExponent
+    probabilityGroupExponent = tuning.detect.probabilityGroupExponent
+    probabilityWeightFloor = tuning.detect.probabilityWeightFloor
+    calibrationSearchStep = tuning.detect.calibrationSearchStep
+    calibrationSearchRadius = tuning.detect.calibrationSearchRadius
+    sampleTopPercent = tuning.detect.sampleTopPercent
+    trackSwitchMargin = tuning.trackLock.trackSwitchMargin
+    trackLockMaxDistPx = tuning.trackLock.trackLockMaxDistPx
+    trackLockConfidenceBoost = tuning.trackLock.trackLockConfidenceBoost
+    gmmColorModel.enabled = tuning.detect.enableGmmSoftSegment
+    gmmColorModel.blend = tuning.detect.gmmBlend
 }
 
 internal fun PnPDistanceCalculator.applyTuning(tuning: AppTuningSettings) {
-    estimatedFovDegrees = tuning.estimatedFovDegrees
-    depthInitFallbackMm = tuning.pnpDepthInitFallbackMm
-    solverMaxIterations = tuning.pnpSolverMaxIterations
-    solverConvergenceErrorMm = tuning.pnpSolverConvergenceErrorMm
-    solverLearningRate = tuning.pnpSolverLearningRate
-    solverMinDepthMm = tuning.pnpSolverMinDepthMm
+    estimatedFovDegrees = tuning.pnp.estimatedFovDegrees
+    depthInitFallbackMm = tuning.pnp.pnpDepthInitFallbackMm
+    solverMaxIterations = tuning.pnp.pnpSolverMaxIterations
+    solverConvergenceErrorMm = tuning.pnp.pnpSolverConvergenceErrorMm
+    solverLearningRate = tuning.pnp.pnpSolverLearningRate
+    solverMinDepthMm = tuning.pnp.pnpSolverMinDepthMm
 }
 
 internal fun NodeTrackerManager.applyTuning(tuning: AppTuningSettings) {
@@ -128,7 +133,7 @@ internal fun calculateRgbPnpResult(
         redPoint = red.position,
         greenPoint = green.position,
         bluePoint = blue.position,
-        triangleEdgeLength = tuning.knownTriangleEdgeLengthMm,
+        triangleEdgeLength = tuning.pnp.knownTriangleEdgeLengthMm,
         focalLength = null,
         imageWidth = size.first,
         imageHeight = size.second
@@ -144,7 +149,7 @@ internal fun buildVisionObservation(
     nodeId: Int? = null
 ): VisionObservation? {
     val pnp = calculateRgbPnpResult(spots, imageSize, tuning, pnpCalculator) ?: return null
-    if (!tuning.enableVisionConfidenceGate) {
+    if (!tuning.fusion.enableVisionConfidenceGate) {
         return VisionObservation(
             nodeId = nodeId,
             spots = spots,
@@ -160,12 +165,12 @@ internal fun buildVisionObservation(
     return VisionConfidenceGate.evaluate(
         spots = spots,
         pnp = pnp,
-        edgeLengthMm = tuning.knownTriangleEdgeLengthMm,
+        edgeLengthMm = tuning.pnp.knownTriangleEdgeLengthMm,
         identityConfirmCount = identityConfirmCount,
         nodeId = nodeId,
         config = VisionGateConfig(
-            minConfidence = tuning.visionMinConfidence,
-            maxReprojectionErrorMm = tuning.visionMaxReprojectionErrorMm
+            minConfidence = tuning.fusion.visionMinConfidence,
+            maxReprojectionErrorMm = tuning.fusion.visionMaxReprojectionErrorMm
         )
     )
 }
@@ -203,15 +208,15 @@ internal fun selectPrimaryObservation(
 }
 
 internal fun extractExtraTriangles(
-    detector: BrightSpotDetector,
+    candidates: ColorCandidatePools,
     primarySpots: List<BrightSpot>,
     maxNodes: Int
 ): List<DetectedTriangle> {
-    if (maxNodes <= 1) return emptyList()
+    if (maxNodes <= 1 || candidates.isEmpty()) return emptyList()
     val all = MultiTriangleExtractor.extract(
-        reds = detector.lastRedCandidates,
-        greens = detector.lastGreenCandidates,
-        blues = detector.lastBlueCandidates,
+        reds = candidates.reds,
+        greens = candidates.greens,
+        blues = candidates.blues,
         maxNodes = maxNodes
     )
     if (primarySpots.size != 3) return all

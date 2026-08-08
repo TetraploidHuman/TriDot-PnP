@@ -1,5 +1,15 @@
-package org.example.tridotpnp
+package org.example.tridotpnp.camera
 
+
+import org.example.tridotpnp.config.AppTuningSettings
+import org.example.tridotpnp.config.ProbabilityMatrix32x24
+import org.example.tridotpnp.config.buildManualProbabilityMatrix32x24
+import org.example.tridotpnp.tracking.FrameTrackingSnapshot
+import org.example.tridotpnp.tracking.TrackLockState
+import org.example.tridotpnp.tracking.advanceTrackLockState
+import org.example.tridotpnp.tracking.rgbTripleFromSpots
+import org.example.tridotpnp.vision.BrightSpot
+import org.example.tridotpnp.vision.BrightSpotDetector
 import android.view.MotionEvent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -9,6 +19,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.camera.view.PreviewView
+import org.example.tridotpnp.ui.ProbabilityEditMode
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min

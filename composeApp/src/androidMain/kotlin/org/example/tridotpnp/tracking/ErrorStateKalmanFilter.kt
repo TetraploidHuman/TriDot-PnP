@@ -1,5 +1,12 @@
-package org.example.tridotpnp
+package org.example.tridotpnp.tracking
 
+
+import org.example.tridotpnp.config.AppTuningSettings
+import org.example.tridotpnp.vision.BrightSpot
+import org.example.tridotpnp.vision.BrightSpotDetector
+import org.example.tridotpnp.vision.ColorCalibration
+import org.example.tridotpnp.vision.LedColor
+import org.example.tridotpnp.vision.GmmColorModel
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt

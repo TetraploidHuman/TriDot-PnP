@@ -1,5 +1,17 @@
-﻿package org.example.tridotpnp
+package org.example.tridotpnp.camera
+import org.example.tridotpnp.vision.LedColor
 
+
+import org.example.tridotpnp.config.AppTuningSettings
+import org.example.tridotpnp.config.ProbabilityMatrix32x24
+import org.example.tridotpnp.config.buildManualProbabilityMatrix32x24
+import org.example.tridotpnp.tracking.FrameTrackingSnapshot
+import org.example.tridotpnp.tracking.TrackLockState
+import org.example.tridotpnp.tracking.advanceTrackLockState
+import org.example.tridotpnp.tracking.rgbTripleFromSpots
+import org.example.tridotpnp.vision.BrightSpot
+import org.example.tridotpnp.vision.BrightSpotDetector
+import org.example.tridotpnp.vision.ColorCandidatePools
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.hardware.camera2.CameraCharacteristics
@@ -71,6 +83,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import org.example.tridotpnp.ui.ProbabilityEditMode
 
 @androidx.camera.camera2.interop.ExperimentalCamera2Interop
 @OptIn(ExperimentalCamera2Interop::class)
@@ -91,7 +104,7 @@ fun CameraPreview(
      * Runs on the camera analyzer thread before UI state is posted.
      * Use for tracking / PnP so the main thread only applies snapshots.
      */
-    onSpotsAnalyzed: ((List<BrightSpot>, Pair<Int, Int>) -> FrameTrackingSnapshot?)? = null,
+    onSpotsAnalyzed: ((List<BrightSpot>, Pair<Int, Int>, ColorCandidatePools) -> FrameTrackingSnapshot?)? = null,
     onBrightSpotsDetected: (List<BrightSpot>, Pair<Int, Int>?, FrameTrackingSnapshot?) -> Unit = { _, _, _ -> },
     onBitmapCaptured: (Bitmap) -> Unit = {},
     captureBitmapForCalibration: Boolean = false,
@@ -122,12 +135,6 @@ fun CameraPreview(
     var lastEditedProbabilityDisplayCell by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var dragAnchorProbabilityDisplayCell by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var liveProbabilityMatrix by remember(probabilityMatrix) { mutableStateOf(probabilityMatrix) }
-    val forceGlobalSearchRequested = remember { AtomicBoolean(false) }
-
-    // Multi-frame RGB lock (confidence rises while the same triangle is held)
-    val trackLockRef = remember { AtomicReference<TrackLockState?>(null) }
-    val lockMissFrames = remember { AtomicInteger(0) }
-
     // ROI可视化信息（原图坐标）
     var roiVisualizationInfo by remember { mutableStateOf<RoiVisualizationInfo?>(null) }
 
@@ -149,26 +156,52 @@ fun CameraPreview(
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
     val coroutineScope = rememberCoroutineScope()
 
-    // 帧率计算相关 - 使用Atomic类型确保线程安全
-    val frameCount = remember { AtomicInteger(0) }
-    val lastFrameTime = remember { AtomicLong(System.nanoTime()) }
-
-    // 使用rememberUpdatedState确保闭包中始终使用最新的回调
-    val currentOnFpsUpdate = rememberUpdatedState(onFpsUpdate)
-
     // 使用rememberUpdatedState确保闭包中始终使用最新的值
-    val currentExposureCompensation = rememberUpdatedState(tuning.exposureCompensation)
-    val currentGridSize = rememberUpdatedState(tuning.gridSize)
+    val currentExposureCompensation = rememberUpdatedState(tuning.camera.exposureCompensation)
+    val currentGridSize = rememberUpdatedState(tuning.camera.gridSize)
     val currentProbabilityMatrix = rememberUpdatedState(probabilityMatrix)
-    val currentEnableRoiOptimization = rememberUpdatedState(tuning.enableRoiOptimization)
+    val currentEnableRoiOptimization = rememberUpdatedState(tuning.camera.enableRoiOptimization)
     val currentCaptureBitmapForCalibration = rememberUpdatedState(captureBitmapForCalibration)
     val currentTuning = rememberUpdatedState(tuning)
     val currentOnSpotsAnalyzed = rememberUpdatedState(onSpotsAnalyzed)
     val currentOnBrightSpotsDetected = rememberUpdatedState(onBrightSpotsDetected)
+    val currentOnFpsUpdate = rememberUpdatedState(onFpsUpdate)
+    val currentOnBitmapCaptured = rememberUpdatedState(onBitmapCaptured)
+
+    val frameAnalyzer = remember {
+        SpotFrameAnalyzer(
+            detector = detector,
+            mainHandler = mainHandler,
+            onFpsUpdate = { currentOnFpsUpdate.value },
+            onTuning = { currentTuning.value },
+            onProbabilityMatrix = { currentProbabilityMatrix.value },
+            onEnableRoiOptimization = { currentEnableRoiOptimization.value },
+            onCaptureBitmapForCalibration = { currentCaptureBitmapForCalibration.value },
+            onSpotsAnalyzed = { currentOnSpotsAnalyzed.value },
+            onBrightSpotsDetected = { currentOnBrightSpotsDetected.value },
+            onBitmapCaptured = { currentOnBitmapCaptured.value(it) },
+            onRoiInfo = { roiVisualizationInfo = it },
+            onManualRoiCleared = {
+                manualRoiStart = null
+                manualRoiEnd = null
+                manualRoiImageCoords = null
+            },
+            onPreviewSpots = { spots, size ->
+                brightSpots = spots
+                previewSize = size
+            }
+        )
+    }
+
+    // Keep analyzer ROI seeds in sync with Compose gesture state (atomic reads on analyzer thread).
+    SideEffect {
+        frameAnalyzer.manualRoiRef.set(manualRoiImageCoords)
+        frameAnalyzer.limitRegionRef.set(limitRegionImageCoords)
+    }
 
     // ROI可视化关闭时只清 ROI 动画；RGB lock 仍保留给跟踪粘滞
-    LaunchedEffect(tuning.enableRoiOptimization) {
-        if (!tuning.enableRoiOptimization) {
+    LaunchedEffect(tuning.camera.enableRoiOptimization) {
+        if (!tuning.camera.enableRoiOptimization) {
             roiVisualizationInfo = null
         }
     }
@@ -182,7 +215,7 @@ fun CameraPreview(
         }
     }
 
-    LaunchedEffect(tuning.gridSize, isGridSizeAdjusting) {
+    LaunchedEffect(tuning.camera.gridSize, isGridSizeAdjusting) {
         if (!hasObservedGridSizeChange) {
             hasObservedGridSizeChange = true
             return@LaunchedEffect
@@ -195,7 +228,7 @@ fun CameraPreview(
     }
 
     // 当曝光补偿改变时更新相机设置
-    LaunchedEffect(tuning.exposureCompensation) {
+    LaunchedEffect(tuning.camera.exposureCompensation) {
         camera?.let { cam ->
             val cameraControl = cam.cameraControl
 
@@ -208,8 +241,8 @@ fun CameraPreview(
             camera2Control.setCaptureRequestOptions(lockRequest)
 
             // 再设置曝光补偿
-            cameraControl.setExposureCompensationIndex(tuning.exposureCompensation)
-            android.util.Log.d("Camera", "AE locked with exposure: ${tuning.exposureCompensation}")
+            cameraControl.setExposureCompensationIndex(tuning.camera.exposureCompensation)
+            android.util.Log.d("Camera", "AE locked with exposure: ${tuning.camera.exposureCompensation}")
         }
     }
 
@@ -298,7 +331,7 @@ fun CameraPreview(
 
                 ShutterKeyEvent.FULL_PRESS_DOWN -> {
                     haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
-                    forceGlobalSearchRequested.set(true)
+                    frameAnalyzer.forceGlobalSearchRequested.set(true)
                     roiVisualizationInfo = null
                     Log.d("ShutterKey", "FULL_PRESS_DOWN captured")
                 }
@@ -672,102 +705,11 @@ fun CameraPreview(
                         .build()
                         .also { analysis ->
                             analysis.setAnalyzer(cameraExecutor) { imageProxy ->
-                                    // 计算帧率（线程安全）
-                                    val currentTime = System.nanoTime()
-                                    val count = frameCount.incrementAndGet()
-                                    val elapsedNs = currentTime - lastFrameTime.get()
-                                    // 每秒更新一次帧率
-                                    if (elapsedNs >= 1_000_000_000L) { // 1秒
-                                        val fps = count * 1_000_000_000f / elapsedNs
-                                        frameCount.set(0)
-                                        lastFrameTime.set(currentTime)
-                                        // 在主线程中通知UI更新帧率
-                                        mainHandler.post {
-                                            currentOnFpsUpdate.value(fps)
-                                        }
-                                    }
-
-                                    // 获取当前手动ROI坐标和限制区域坐标（通过原子引用或直接使用，因为这是主线程上下文）
-                                    val currentManualRoi = manualRoiImageCoords
-                                    val currentLimitRegion = limitRegionImageCoords
-
-
-                                    val lockState = trackLockRef.get()
-                                    val tuningNow = currentTuning.value
-                                    processImage(
-                                        imageProxy = imageProxy,
-                                        detector = detector,
-                                        tuning = tuningNow,
-                                        probabilityMatrix = currentProbabilityMatrix.value,
-                                        enableRoiOptimization = currentEnableRoiOptimization.value,
-                                        lastTriSpots = lockState?.rgb,
-                                        lastTriSpotsImageSize = lockState?.imageSize,
-                                        lockConfidence = lockState?.confidence ?: 0f,
-                                        manualRoi = currentManualRoi,
-                                        limitRegion = currentLimitRegion,
-                                        forceGlobalSearch = forceGlobalSearchRequested.getAndSet(false),
-                                        onRoiInfo = { info ->
-                                            // 在主线程中更新ROI可视化信息
-                                            mainHandler.post {
-                                                roiVisualizationInfo = info
-                                            }
-                                        },
-                                        onSpotsDetected = { spots, size, foundInManualRoi ->
-                                            // 如果在手动ROI中找到三色点，清除手动ROI并隐藏显示框
-                                            if (foundInManualRoi && spots.size == 3) {
-                                                mainHandler.post {
-                                                    manualRoiStart = null
-                                                    manualRoiEnd = null
-                                                    manualRoiImageCoords = null
-                                                }
-                                            }
-
-                                            val rgb = rgbTripleFromSpots(spots)
-                                            val miss = if (rgb == null) {
-                                                lockMissFrames.incrementAndGet()
-                                            } else {
-                                                lockMissFrames.set(0)
-                                                0
-                                            }
-                                            // Map working-space lock distance into original image pixels.
-                                            val imageLockDist = if (size != null) {
-                                                val scale = min(
-                                                    1f,
-                                                    tuningNow.workingMaxDimension.toFloat() /
-                                                        max(size.first, size.second).toFloat()
-                                                )
-                                                tuningNow.trackLockMaxDistPx / scale.coerceAtLeast(0.05f)
-                                            } else {
-                                                tuningNow.trackLockMaxDistPx
-                                            }
-                                            trackLockRef.set(
-                                                advanceTrackLockState(
-                                                    previous = trackLockRef.get(),
-                                                    newRgb = rgb,
-                                                    imageSize = size,
-                                                    preferredExistingLock = detector.lastPreferredTrackLock,
-                                                    imageSpaceLockDistPx = imageLockDist,
-                                                    confidenceRise = tuningNow.trackLockConfidenceRise,
-                                                    confidenceDecay = tuningNow.trackLockConfidenceDecay,
-                                                    missStreak = miss,
-                                                    clearAfterMisses = 12
-                                                )
-                                            )
-
-                                            // Tracking / PnP on analyzer thread (same results, less main-thread jank)
-                                            val snap = currentOnSpotsAnalyzed.value?.invoke(spots, size)
-
-                                            // Compose state updates must run on main thread.
-                                            mainHandler.post {
-                                                brightSpots = spots
-                                                previewSize = size
-                                                currentOnBrightSpotsDetected.value(spots, size, snap)
-                                            }
-                                        },
-                                        captureBitmapForCalibration = currentCaptureBitmapForCalibration.value,
-                                        onBitmapCaptured = onBitmapCaptured
-                                    )
+                                try {
+                                    frameAnalyzer.analyze(imageProxy)
+                                } finally {
                                     imageProxy.close()
+                                }
                             }
                         }
 
@@ -1492,7 +1434,7 @@ fun CameraPreview(
                 val previewScale = min(size.width / imageWidth.toFloat(), size.height / imageHeight.toFloat())
                 val displayedWidth = imageWidth * previewScale
                 val displayedHeight = imageHeight * previewScale
-                val gridSize = tuning.gridSize
+                val gridSize = tuning.camera.gridSize
                 val stepX = displayedWidth / gridSize.toFloat()
                 val stepY = displayedHeight / gridSize.toFloat()
                 val gridColor = Color.White.copy(alpha = 0.24f * gridPreviewAlpha)

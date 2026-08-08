@@ -1,5 +1,7 @@
-﻿package org.example.tridotpnp
+package org.example.tridotpnp.vision
 
+import org.example.tridotpnp.config.ProbabilityMatrix32x24
+import org.example.tridotpnp.config.AppTuningSettings
 import android.graphics.Bitmap
 import androidx.compose.ui.geometry.Offset
 import androidx.core.graphics.get
@@ -44,14 +46,6 @@ class BrightSpotDetector {
 
     /** Optional GMM soft-segmentation prior blended into HSV scores. */
     val gmmColorModel: GmmColorModel = GmmColorModel()
-
-    /** Latest per-color Top-N candidates (unrefined), for multi-node RANSAC extraction. */
-    var lastRedCandidates: List<BrightSpot> = emptyList()
-        private set
-    var lastGreenCandidates: List<BrightSpot> = emptyList()
-        private set
-    var lastBlueCandidates: List<BrightSpot> = emptyList()
-        private set
 
     // ===== HSV 目标缓存（避免每次都转）=====
     private val targetRedHSV = FloatArray(3)
@@ -104,8 +98,6 @@ class BrightSpotDetector {
     @Volatile var trackSwitchMargin: Float = 0.20f
     @Volatile var trackLockMaxDistPx: Float = 72f
     @Volatile var trackLockConfidenceBoost: Float = 2.0f
-    /** Set by the last [detectBrightSpots] call: true if hysteresis kept the prior lock. */
-    @Volatile var lastPreferredTrackLock: Boolean = false
 
     private fun candidateProbWeight(raw: Float): Float {
         val clamped = raw.coerceAtLeast(probabilityWeightFloor)
@@ -235,12 +227,10 @@ class BrightSpotDetector {
         lockPriorRgb: Triple<Offset, Offset, Offset>? = null,
         /** 0..1 accumulated multi-frame lock confidence; scales switch margin. */
         lockConfidence: Float = 0f
-    ): List<BrightSpot> {
-        lastPreferredTrackLock = false
-
+    ): BrightSpotDetectionResult {
         val width = bitmap.width
         val height = bitmap.height
-        if (width <= 1 || height <= 1) return emptyList()
+        if (width <= 1 || height <= 1) return BrightSpotDetectionResult.Empty
 
         // 准备 HSV 目标
         ensureTargetsPrepared()
@@ -266,7 +256,7 @@ class BrightSpotDetector {
                 searchHeight
             )
         } catch (_: Exception) {
-            return emptyList()
+            return BrightSpotDetectionResult.Empty
         }
 
         val stepX: Int
@@ -423,10 +413,7 @@ class BrightSpotDetector {
             }
 
             if (reds.isEmpty() || greens.isEmpty() || blues.isEmpty()) {
-                lastRedCandidates = emptyList()
-                lastGreenCandidates = emptyList()
-                lastBlueCandidates = emptyList()
-                return emptyList()
+                return BrightSpotDetectionResult.Empty
             }
 
             fun candidateToSpot(c: Candidate, color: LedColor): BrightSpot {
@@ -445,9 +432,9 @@ class BrightSpotDetector {
                     blueIntensity = c.b
                 )
             }
-            lastRedCandidates = reds.map { candidateToSpot(it, LedColor.RED) }
-            lastGreenCandidates = greens.map { candidateToSpot(it, LedColor.GREEN) }
-            lastBlueCandidates = blues.map { candidateToSpot(it, LedColor.BLUE) }
+            val redCandidates = reds.map { candidateToSpot(it, LedColor.RED) }
+            val greenCandidates = greens.map { candidateToSpot(it, LedColor.GREEN) }
+            val blueCandidates = blues.map { candidateToSpot(it, LedColor.BLUE) }
 
             var bestTripleR: Candidate? = null
             var bestTripleG: Candidate? = null
@@ -560,10 +547,17 @@ class BrightSpotDetector {
                 bestTripleR = lockedTripleR
                 bestTripleG = lockedTripleG
                 bestTripleB = lockedTripleB
-                lastPreferredTrackLock = true
             }
 
-            if (bestTripleR == null || bestTripleG == null || bestTripleB == null) return emptyList()
+            if (bestTripleR == null || bestTripleG == null || bestTripleB == null) {
+                return BrightSpotDetectionResult(
+                    spots = emptyList(),
+                    redCandidates = redCandidates,
+                    greenCandidates = greenCandidates,
+                    blueCandidates = blueCandidates,
+                    preferredTrackLock = false
+                )
+            }
 
             // 只 refine 这 3 个
             val refineRadius = calcRefineRadius()
@@ -601,7 +595,13 @@ class BrightSpotDetector {
             addRefined(bestTripleR, LedColor.RED)
             addRefined(bestTripleG, LedColor.GREEN)
             addRefined(bestTripleB, LedColor.BLUE)
-            return result
+            return BrightSpotDetectionResult(
+                spots = result,
+                redCandidates = redCandidates,
+                greenCandidates = greenCandidates,
+                blueCandidates = blueCandidates,
+                preferredTrackLock = preferLocked
+            )
     }
 
     // ===== HSV 版区域强度：返回 (目标1, 目标2, 目标3) 强度 =====

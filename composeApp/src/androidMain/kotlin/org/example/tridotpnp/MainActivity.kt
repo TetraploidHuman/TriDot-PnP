@@ -1,5 +1,9 @@
 package org.example.tridotpnp
 
+
+import org.example.tridotpnp.camera.ShutterKeyController
+import org.example.tridotpnp.camera.ShutterKeyEvent
+import org.example.tridotpnp.camera.VolumeKeyZoomController
 import android.annotation.SuppressLint
 import android.os.Bundle
 import android.view.KeyEvent

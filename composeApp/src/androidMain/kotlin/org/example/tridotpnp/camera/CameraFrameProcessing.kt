@@ -1,10 +1,17 @@
-package org.example.tridotpnp
+package org.example.tridotpnp.camera
 
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import androidx.camera.core.ImageProxy
 import androidx.compose.ui.geometry.Offset
 import androidx.core.graphics.scale
+import org.example.tridotpnp.config.AppTuningSettings
+import org.example.tridotpnp.config.ProbabilityMatrix32x24
+import org.example.tridotpnp.vision.BrightSpot
+import org.example.tridotpnp.vision.BrightSpotDetectionResult
+import org.example.tridotpnp.vision.BrightSpotDetector
+import org.example.tridotpnp.vision.ColorCandidatePools
+import org.example.tridotpnp.vision.LedColor
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -39,8 +46,22 @@ private data class WorkingRegion(val left: Int, val top: Int, val right: Int, va
 
 private data class DetectionResult(
     val spots: List<BrightSpot>,
-    val foundInManualRoi: Boolean
+    val foundInManualRoi: Boolean,
+    val redCandidates: List<BrightSpot> = emptyList(),
+    val greenCandidates: List<BrightSpot> = emptyList(),
+    val blueCandidates: List<BrightSpot> = emptyList(),
+    val preferredTrackLock: Boolean = false
 )
+
+private fun BrightSpotDetectionResult.asFrameResult(foundInManualRoi: Boolean): DetectionResult =
+    DetectionResult(
+        spots = spots,
+        foundInManualRoi = foundInManualRoi,
+        redCandidates = redCandidates,
+        greenCandidates = greenCandidates,
+        blueCandidates = blueCandidates,
+        preferredTrackLock = preferredTrackLock
+    )
 
 private enum class DetectionMode {
     ManualRoi,
@@ -145,7 +166,7 @@ internal fun processImage(
     limitRegion: ManualRoiCoords? = null,
     forceGlobalSearch: Boolean = false,
     onRoiInfo: ((RoiVisualizationInfo?) -> Unit)? = null,
-    onSpotsDetected: (List<BrightSpot>, Pair<Int, Int>, Boolean) -> Unit,
+    onSpotsDetected: (List<BrightSpot>, Pair<Int, Int>, Boolean, ColorCandidatePools, Boolean) -> Unit,
     captureBitmapForCalibration: Boolean = false,
     onBitmapCaptured: (Bitmap) -> Unit = {}
 ) {
@@ -185,11 +206,19 @@ internal fun processImage(
             scaleDown = frame.scaleDown,
             limitRegion = limitRegion
         )
+        // Keep candidate pools in the same image space as primary spots, and honor limitRegion.
+        val candidates = ColorCandidatePools(
+            reds = mapSpotsBackToOriginal(detectionResult.redCandidates, frame.scaleDown, limitRegion),
+            greens = mapSpotsBackToOriginal(detectionResult.greenCandidates, frame.scaleDown, limitRegion),
+            blues = mapSpotsBackToOriginal(detectionResult.blueCandidates, frame.scaleDown, limitRegion)
+        )
         val refinedSpots = refineSpotsOnOriginal(frame.rotatedBitmap, spots, tuning)
         onSpotsDetected(
             refinedSpots,
             frame.rotatedBitmap.width to frame.rotatedBitmap.height,
-            detectionResult.foundInManualRoi
+            detectionResult.foundInManualRoi,
+            candidates,
+            detectionResult.preferredTrackLock
         )
 
         captureCalibrationBitmapIfNeeded(
@@ -275,8 +304,8 @@ private fun runDetection(
             detectSpotsGlobally(
                 detector = detector,
                 bitmap = frame.workingBitmap,
-                threshold = tuning.detectionThreshold,
-                gridSize = tuning.gridSize,
+                threshold = tuning.camera.detectionThreshold,
+                gridSize = tuning.camera.gridSize,
                 limitRegionWorking = limitRegionWorking,
                 probabilityMatrix = probabilityMatrix,
                 tuning = tuning,
@@ -307,7 +336,7 @@ private fun prepareFrame(
     tuning: AppTuningSettings
 ): PreparedFrame {
     val rotatedBitmap = rotateBitmap(bitmap, imageProxy.imageInfo.rotationDegrees.toFloat())
-    val maxDim = tuning.workingMaxDimension.toFloat().coerceAtLeast(64f)
+    val maxDim = tuning.camera.workingMaxDimension.toFloat().coerceAtLeast(64f)
     val origW = rotatedBitmap.width
     val origH = rotatedBitmap.height
     val scaleDown = min(1f, maxDim / max(origW, origH))
@@ -371,10 +400,10 @@ private fun detectSpotsInManualRoi(
     roiRight = intersected.right
     roiBottom = intersected.bottom
 
-    val spots = detector.detectBrightSpots(
+    val detect = detector.detectBrightSpots(
         bitmap = frame.workingBitmap,
-        threshold = tuning.detectionThreshold,
-        gridSize = tuning.gridSize,
+        threshold = tuning.camera.detectionThreshold,
+        gridSize = tuning.camera.gridSize,
         roiLeft = roiLeft,
         roiTop = roiTop,
         roiRight = roiRight,
@@ -391,7 +420,7 @@ private fun detectSpotsInManualRoi(
         lockPriorRgb = lockPriorRgb,
         lockConfidence = lockConfidence
     )
-    return DetectionResult(spots = spots, foundInManualRoi = spots.size == 3)
+    return detect.asFrameResult(foundInManualRoi = detect.spots.size == 3)
 }
 
 private fun detectSpotsWithAdaptiveRoi(
@@ -418,30 +447,30 @@ private fun detectSpotsWithAdaptiveRoi(
         currentWidth = frame.rotatedBitmap.width,
         currentHeight = frame.rotatedBitmap.height,
         workingScale = frame.workingScale,
-        roiInitialRadiusMultiplier = tuning.roiInitialRadiusMultiplier
+        roiInitialRadiusMultiplier = tuning.camera.roiInitialRadiusMultiplier
     )
 
     var currentRadius = initialRoiSeed.third
     var lastTriRadius: Float? = null
     val recentAttempts = mutableListOf<Boolean>()
-    val maxRecentAttempts = tuning.roiRecentAttempts.coerceAtLeast(1)
-    val failureThreshold = tuning.roiFailureThreshold.coerceIn(1, maxRecentAttempts)
+    val maxRecentAttempts = tuning.camera.roiRecentAttempts.coerceAtLeast(1)
+    val failureThreshold = tuning.camera.roiFailureThreshold.coerceIn(1, maxRecentAttempts)
     val workingWidth = frame.workingBitmap.width
     val workingHeight = frame.workingBitmap.height
     val maxRadiusLimit = limitRegionWorking?.let {
         maxOf(it.right - it.left, it.bottom - it.top) * 0.5f
     }
     val maxAllowedRadius = min(
-        max(workingWidth, workingHeight) * tuning.roiMaxRadiusRatio.coerceIn(0.05f, 1f),
+        max(workingWidth, workingHeight) * tuning.camera.roiMaxRadiusRatio.coerceIn(0.05f, 1f),
         maxRadiusLimit ?: Float.MAX_VALUE
     )
 
-    var foundSpots: List<BrightSpot>? = null
+    var foundDetect: BrightSpotDetectionResult? = null
     var finalRoiInfo: RoiVisualizationInfo? = null
     var expansionCount = 0
-    val maxExpansions = tuning.roiMaxExpansions.coerceAtLeast(1)
+    val maxExpansions = tuning.camera.roiMaxExpansions.coerceAtLeast(1)
 
-    while (foundSpots == null && currentRadius <= maxAllowedRadius && expansionCount < maxExpansions) {
+    while (foundDetect == null && currentRadius <= maxAllowedRadius && expansionCount < maxExpansions) {
         val roiBounds = intersectWithLimitRegion(
             left = (initialRoiSeed.first - currentRadius).toInt().coerceAtLeast(0),
             top = (initialRoiSeed.second - currentRadius).toInt().coerceAtLeast(0),
@@ -451,15 +480,15 @@ private fun detectSpotsWithAdaptiveRoi(
         )
 
         if (roiBounds.right <= roiBounds.left || roiBounds.bottom <= roiBounds.top) {
-            currentRadius *= tuning.roiExpandFactor.coerceAtLeast(1.01f)
+            currentRadius *= tuning.camera.roiExpandFactor.coerceAtLeast(1.01f)
             expansionCount++
             continue
         }
 
-        val roiSpots = detector.detectBrightSpots(
+        val detect = detector.detectBrightSpots(
             bitmap = frame.workingBitmap,
-            threshold = tuning.detectionThreshold,
-            gridSize = tuning.gridSize,
+            threshold = tuning.camera.detectionThreshold,
+            gridSize = tuning.camera.gridSize,
             roiLeft = roiBounds.left,
             roiTop = roiBounds.top,
             roiRight = roiBounds.right,
@@ -476,6 +505,7 @@ private fun detectSpotsWithAdaptiveRoi(
             lockPriorRgb = lockPriorRgb,
             lockConfidence = lockConfidence
         )
+        val roiSpots = detect.spots
 
         val isStable = if (roiSpots.size == 3 && lastTriRadius != null) {
             val currRadius = calculateCircumradius(
@@ -484,13 +514,13 @@ private fun detectSpotsWithAdaptiveRoi(
                 roiSpots[2].position
             )
             val changeRatio = abs(currRadius - lastTriRadius) / lastTriRadius
-            changeRatio <= tuning.roiStabilityTolerance.coerceAtLeast(0f)
+            changeRatio <= tuning.camera.roiStabilityTolerance.coerceAtLeast(0f)
         } else {
             roiSpots.size == 3
         }
 
         if (roiSpots.size == 3 && isStable) {
-            foundSpots = roiSpots
+            foundDetect = detect
             finalRoiInfo = RoiVisualizationInfo(
                 left = roiBounds.left / frame.workingScale,
                 top = roiBounds.top / frame.workingScale,
@@ -506,7 +536,7 @@ private fun detectSpotsWithAdaptiveRoi(
             )
             recentAttempts.add(true)
         } else {
-            currentRadius *= tuning.roiExpandFactor.coerceAtLeast(1.01f)
+            currentRadius *= tuning.camera.roiExpandFactor.coerceAtLeast(1.01f)
             expansionCount++
             recentAttempts.add(false)
         }
@@ -515,19 +545,19 @@ private fun detectSpotsWithAdaptiveRoi(
             recentAttempts.removeAt(0)
         }
         if (recentAttempts.count { !it } >= failureThreshold) {
-            foundSpots = null
+            foundDetect = null
             onRoiInfo?.invoke(null)
             break
         }
     }
 
-    return if (foundSpots == null) {
+    return if (foundDetect == null) {
         onRoiInfo?.invoke(null)
         detectSpotsGlobally(
             detector = detector,
             bitmap = frame.workingBitmap,
-            threshold = tuning.detectionThreshold,
-            gridSize = tuning.gridSize,
+            threshold = tuning.camera.detectionThreshold,
+            gridSize = tuning.camera.gridSize,
             limitRegionWorking = limitRegionWorking,
             probabilityMatrix = probabilityMatrix,
             tuning = tuning,
@@ -536,7 +566,7 @@ private fun detectSpotsWithAdaptiveRoi(
         )
     } else {
         finalRoiInfo?.let { info -> onRoiInfo?.invoke(info) }
-        DetectionResult(foundSpots, foundInManualRoi = false)
+        foundDetect.asFrameResult(foundInManualRoi = false)
     }
 }
 
@@ -571,7 +601,7 @@ private fun detectSpotsGlobally(
     lockPriorRgb: Triple<Offset, Offset, Offset>? = null,
     lockConfidence: Float = 0f
 ): DetectionResult {
-    val spots = limitRegionWorking?.let {
+    val detect = limitRegionWorking?.let {
         detector.detectBrightSpots(
             bitmap = bitmap,
             threshold = threshold,
@@ -600,7 +630,7 @@ private fun detectSpotsGlobally(
         lockPriorRgb = lockPriorRgb,
         lockConfidence = lockConfidence
     )
-    return DetectionResult(spots, foundInManualRoi = false)
+    return detect.asFrameResult(foundInManualRoi = false)
 }
 
 private fun intersectWithLimitRegion(
@@ -673,13 +703,13 @@ private fun refineSpotsOnOriginal(
     if (spots.isEmpty()) return spots
     val width = bitmap.width
     val height = bitmap.height
-    val step = max(1, max(width / tuning.gridSize, height / tuning.gridSize))
-    val radius = (step * tuning.refineRadiusMultiplier).toInt()
-        .coerceAtLeast(tuning.refineMinRadiusPx)
+    val step = max(1, max(width / tuning.camera.gridSize, height / tuning.camera.gridSize))
+    val radius = (step * tuning.camera.refineRadiusMultiplier).toInt()
+        .coerceAtLeast(tuning.camera.refineMinRadiusPx)
         .coerceAtMost(min(width, height) / 6)
-    val backgroundDarkness = tuning.refineBackgroundDarkness
-    val sigmaFactor = tuning.refineGaussianSigmaFactor.coerceAtLeast(0.1f)
-    val iterations = tuning.refineIterations.coerceAtLeast(1)
+    val backgroundDarkness = tuning.camera.refineBackgroundDarkness
+    val sigmaFactor = tuning.camera.refineGaussianSigmaFactor.coerceAtLeast(0.1f)
+    val iterations = tuning.camera.refineIterations.coerceAtLeast(1)
 
     fun weightFor(pixel: Int, prefer: LedColor): Float {
         val r = ((pixel shr 16) and 0xFF).toFloat()

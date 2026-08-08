@@ -1,5 +1,12 @@
-package org.example.tridotpnp
+package org.example.tridotpnp.tracking
 
+
+import org.example.tridotpnp.config.AppTuningSettings
+import org.example.tridotpnp.vision.BrightSpot
+import org.example.tridotpnp.vision.BrightSpotDetector
+import org.example.tridotpnp.vision.ColorCalibration
+import org.example.tridotpnp.vision.LedColor
+import org.example.tridotpnp.vision.GmmColorModel
 import androidx.compose.ui.geometry.Offset
 import kotlin.math.sqrt
 
@@ -49,16 +56,16 @@ class NodeTrackerManager(
 
     fun configure(tuning: AppTuningSettings) {
         synchronized(this) {
-            edgeLengthMm = tuning.knownTriangleEdgeLengthMm
-            visionMinConfidence = tuning.visionMinConfidence
-            visionMaxReprojectionErrorMm = tuning.visionMaxReprojectionErrorMm
-            enableIdentityDecode = tuning.enableIdentityDecode
-            enableTopologyPrior = tuning.enableTopologyPrior
-            enableEskfFusion = tuning.enableEskfFusion
-            enableIkPostProcess = tuning.enableIkPostProcess
-            enableVisionGate = tuning.enableVisionConfidenceGate
-            maxNodes = tuning.maxTrackedNodes.coerceIn(1, 17)
-            identityConfirmNeeded = tuning.identityConfirmNeeded.coerceIn(1, 10)
+            edgeLengthMm = tuning.pnp.knownTriangleEdgeLengthMm
+            visionMinConfidence = tuning.fusion.visionMinConfidence
+            visionMaxReprojectionErrorMm = tuning.fusion.visionMaxReprojectionErrorMm
+            enableIdentityDecode = tuning.fusion.enableIdentityDecode
+            enableTopologyPrior = tuning.fusion.enableTopologyPrior
+            enableEskfFusion = tuning.fusion.enableEskfFusion
+            enableIkPostProcess = tuning.fusion.enableIkPostProcess
+            enableVisionGate = tuning.fusion.enableVisionConfidenceGate
+            maxNodes = tuning.fusion.maxTrackedNodes.coerceIn(1, 17)
+            identityConfirmNeeded = tuning.fusion.identityConfirmNeeded.coerceIn(1, 10)
         }
     }
 
@@ -88,16 +95,16 @@ class NodeTrackerManager(
     ): List<TrackedNodeState> {
         synchronized(this) {
             // configure already holds lock; call body fields directly
-            edgeLengthMm = tuning.knownTriangleEdgeLengthMm
-            visionMinConfidence = tuning.visionMinConfidence
-            visionMaxReprojectionErrorMm = tuning.visionMaxReprojectionErrorMm
-            enableIdentityDecode = tuning.enableIdentityDecode
-            enableTopologyPrior = tuning.enableTopologyPrior
-            enableEskfFusion = tuning.enableEskfFusion
-            enableIkPostProcess = tuning.enableIkPostProcess
-            enableVisionGate = tuning.enableVisionConfidenceGate
-            maxNodes = tuning.maxTrackedNodes.coerceIn(1, 17)
-            identityConfirmNeeded = tuning.identityConfirmNeeded.coerceIn(1, 10)
+            edgeLengthMm = tuning.pnp.knownTriangleEdgeLengthMm
+            visionMinConfidence = tuning.fusion.visionMinConfidence
+            visionMaxReprojectionErrorMm = tuning.fusion.visionMaxReprojectionErrorMm
+            enableIdentityDecode = tuning.fusion.enableIdentityDecode
+            enableTopologyPrior = tuning.fusion.enableTopologyPrior
+            enableEskfFusion = tuning.fusion.enableEskfFusion
+            enableIkPostProcess = tuning.fusion.enableIkPostProcess
+            enableVisionGate = tuning.fusion.enableVisionConfidenceGate
+            maxNodes = tuning.fusion.maxTrackedNodes.coerceIn(1, 17)
+            identityConfirmNeeded = tuning.fusion.identityConfirmNeeded.coerceIn(1, 10)
 
             val triples = mutableListOf<DetectedTriangle>()
             if (spots.size == 3) {
@@ -107,7 +114,7 @@ class NodeTrackerManager(
                 )
                 triples += DetectedTriangle(spots, score = 1f, center = center)
             }
-            if (tuning.enableMultiNodeTracking) {
+            if (tuning.fusion.enableMultiNodeTracking) {
                 triples += extraTriples
             }
             return finalize(updateTriples(triples, imageSize, tuning, timestampMs))

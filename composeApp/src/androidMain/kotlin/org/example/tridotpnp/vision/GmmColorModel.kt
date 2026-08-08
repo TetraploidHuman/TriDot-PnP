@@ -1,5 +1,7 @@
-package org.example.tridotpnp
+package org.example.tridotpnp.vision
 
+
+import org.example.tridotpnp.config.AppTuningSettings
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.exp

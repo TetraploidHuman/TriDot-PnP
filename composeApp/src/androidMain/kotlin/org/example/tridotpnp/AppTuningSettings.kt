@@ -3,7 +3,7 @@ package org.example.tridotpnp
 data class AppTuningSettings(
     val gridSize: Int = 256,
     val exposureCompensation: Int = 0,
-    val knownTriangleEdgeLengthMm: Float = 100f,
+    val knownTriangleEdgeLengthMm: Float = 18f,
     val enableRoiOptimization: Boolean = true,
     val detectionThreshold: Float = 80f,
     val workingMaxDimension: Int = 1280,
@@ -53,5 +53,19 @@ data class AppTuningSettings(
     val pnpSolverMaxIterations: Int = 50,
     val pnpSolverConvergenceErrorMm: Float = 0.1f,
     val pnpSolverLearningRate: Float = 0.5f,
-    val pnpSolverMinDepthMm: Float = 100f
+    val pnpSolverMinDepthMm: Float = 100f,
+    // --- Vision-inertial / multi-node extensions ---
+    val enableGmmSoftSegment: Boolean = true,
+    val gmmBlend: Float = 0.65f,
+    val enableVisionConfidenceGate: Boolean = true,
+    val visionMinConfidence: Float = 0.45f,
+    val visionMaxReprojectionErrorMm: Float = 25f,
+    val enableIdentityDecode: Boolean = true,
+    val identityConfirmNeeded: Int = 3,
+    val enableMultiNodeTracking: Boolean = true,
+    val maxTrackedNodes: Int = 6,
+    val enableTopologyPrior: Boolean = true,
+    val enableEskfFusion: Boolean = true,
+    val enableIkPostProcess: Boolean = true,
+    val enableBleImu: Boolean = false
 )

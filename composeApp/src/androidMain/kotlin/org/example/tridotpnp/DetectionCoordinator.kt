@@ -30,6 +30,8 @@ internal fun BrightSpotDetector.applyTuning(tuning: AppTuningSettings) {
     calibrationSearchStep = tuning.calibrationSearchStep
     calibrationSearchRadius = tuning.calibrationSearchRadius
     sampleTopPercent = tuning.sampleTopPercent
+    gmmColorModel.enabled = tuning.enableGmmSoftSegment
+    gmmColorModel.blend = tuning.gmmBlend
 }
 
 internal fun PnPDistanceCalculator.applyTuning(tuning: AppTuningSettings) {
@@ -39,6 +41,10 @@ internal fun PnPDistanceCalculator.applyTuning(tuning: AppTuningSettings) {
     solverConvergenceErrorMm = tuning.pnpSolverConvergenceErrorMm
     solverLearningRate = tuning.pnpSolverLearningRate
     solverMinDepthMm = tuning.pnpSolverMinDepthMm
+}
+
+internal fun NodeTrackerManager.applyTuning(tuning: AppTuningSettings) {
+    configure(tuning)
 }
 
 internal fun calculateRgbPnpResult(
@@ -63,4 +69,95 @@ internal fun calculateRgbPnpResult(
         imageWidth = size.first,
         imageHeight = size.second
     )
+}
+
+internal fun buildVisionObservation(
+    spots: List<BrightSpot>,
+    imageSize: Pair<Int, Int>?,
+    tuning: AppTuningSettings,
+    pnpCalculator: PnPDistanceCalculator,
+    identityConfirmCount: Int = 0,
+    nodeId: Int? = null
+): VisionObservation? {
+    val pnp = calculateRgbPnpResult(spots, imageSize, tuning, pnpCalculator) ?: return null
+    if (!tuning.enableVisionConfidenceGate) {
+        return VisionObservation(
+            nodeId = nodeId,
+            spots = spots,
+            pnp = pnp,
+            confidence = 1f,
+            geometryScore = 1f,
+            reprojectionErrorMm = 0f,
+            identityConfirmCount = identityConfirmCount,
+            timestampMs = System.currentTimeMillis(),
+            accepted = true
+        )
+    }
+    return VisionConfidenceGate.evaluate(
+        spots = spots,
+        pnp = pnp,
+        edgeLengthMm = tuning.knownTriangleEdgeLengthMm,
+        identityConfirmCount = identityConfirmCount,
+        nodeId = nodeId,
+        config = VisionGateConfig(
+            minConfidence = tuning.visionMinConfidence,
+            maxReprojectionErrorMm = tuning.visionMaxReprojectionErrorMm
+        )
+    )
+}
+
+internal fun selectPrimaryObservation(
+    nodes: List<TrackedNodeState>,
+    primarySpots: List<BrightSpot>
+): VisionObservation? {
+    if (nodes.isEmpty()) return null
+    if (primarySpots.size == 3) {
+        val cx = (primarySpots[0].position.x + primarySpots[1].position.x + primarySpots[2].position.x) / 3f
+        val cy = (primarySpots[0].position.y + primarySpots[1].position.y + primarySpots[2].position.y) / 3f
+        val nearest = nodes.minByOrNull { n ->
+            val p = n.observation?.pnp?.centerCoords
+            val sx = n.spots.getOrNull(0)?.position?.x
+            val sy = n.spots.getOrNull(0)?.position?.y
+            // Prefer image-space center of tracked spots when available.
+            val nx = if (n.spots.size == 3) {
+                (n.spots[0].position.x + n.spots[1].position.x + n.spots[2].position.x) / 3f
+            } else {
+                sx ?: (p?.x ?: Float.MAX_VALUE)
+            }
+            val ny = if (n.spots.size == 3) {
+                (n.spots[0].position.y + n.spots[1].position.y + n.spots[2].position.y) / 3f
+            } else {
+                sy ?: (p?.y ?: Float.MAX_VALUE)
+            }
+            val dx = nx - cx
+            val dy = ny - cy
+            dx * dx + dy * dy
+        }
+        nearest?.observation?.let { return it }
+    }
+    return nodes.maxByOrNull { it.observation?.confidence ?: -1f }?.observation
+}
+
+internal fun extractExtraTriangles(
+    detector: BrightSpotDetector,
+    primarySpots: List<BrightSpot>,
+    maxNodes: Int
+): List<DetectedTriangle> {
+    if (maxNodes <= 1) return emptyList()
+    val all = MultiTriangleExtractor.extract(
+        reds = detector.lastRedCandidates,
+        greens = detector.lastGreenCandidates,
+        blues = detector.lastBlueCandidates,
+        maxNodes = maxNodes
+    )
+    if (primarySpots.size != 3) return all
+    val primaryCenter = androidx.compose.ui.geometry.Offset(
+        (primarySpots[0].position.x + primarySpots[1].position.x + primarySpots[2].position.x) / 3f,
+        (primarySpots[0].position.y + primarySpots[1].position.y + primarySpots[2].position.y) / 3f
+    )
+    return all.filter { tri ->
+        val dx = tri.center.x - primaryCenter.x
+        val dy = tri.center.y - primaryCenter.y
+        dx * dx + dy * dy > 40f * 40f
+    }
 }

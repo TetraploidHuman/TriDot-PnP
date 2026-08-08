@@ -68,8 +68,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import android.os.Build
+import androidx.compose.runtime.collectAsState
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
+import com.google.accompanist.permissions.rememberMultiplePermissionsState
 import com.google.accompanist.permissions.rememberPermissionState
 import com.google.accompanist.permissions.shouldShowRationale
 
@@ -99,6 +102,8 @@ fun BrightSpotDetectionApp(
     var tuning by remember { mutableStateOf(AppTuningSettings()) }
     var probabilityMatrix by remember { mutableStateOf(buildManualProbabilityMatrix32x24()) }
     var pnpResult by remember { mutableStateOf<PnPDistanceCalculator.PnPResult?>(null) }
+    var visionObservation by remember { mutableStateOf<VisionObservation?>(null) }
+    var trackedNodes by remember { mutableStateOf<List<TrackedNodeState>>(emptyList()) }
     var imageSize by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var fps by remember { mutableFloatStateOf(0f) } // 识别帧率
     var showSettings by remember { mutableStateOf(false) } // 设置页面显示状态
@@ -119,10 +124,49 @@ fun BrightSpotDetectionApp(
     val haptic = LocalHapticFeedback.current
     val pnpCalculator = remember { PnPDistanceCalculator() }
     val detector = remember { BrightSpotDetector() }
+    val nodeTracker = remember { NodeTrackerManager(pnpCalculator) }
+    val bleClient = remember { BleImuClient(context.applicationContext) }
+    val bleSample by bleClient.samples.collectAsState()
+    val bleConnected by bleClient.connectedDevices.collectAsState()
+    val bleScanning by bleClient.scanning.collectAsState()
+
+    val blePermissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        listOf(
+            Manifest.permission.BLUETOOTH_SCAN,
+            Manifest.permission.BLUETOOTH_CONNECT
+        )
+    } else {
+        listOf(Manifest.permission.ACCESS_FINE_LOCATION)
+    }
+    val blePermissionState = rememberMultiplePermissionsState(blePermissions)
 
     LaunchedEffect(tuning) {
         detector.applyTuning(tuning)
         pnpCalculator.applyTuning(tuning)
+        nodeTracker.configure(tuning)
+    }
+
+    LaunchedEffect(tuning.enableBleImu, blePermissionState.allPermissionsGranted) {
+        if (tuning.enableBleImu) {
+            if (blePermissionState.allPermissionsGranted) {
+                bleClient.startScan()
+            } else {
+                blePermissionState.launchMultiplePermissionRequest()
+            }
+        } else {
+            bleClient.disconnectAll()
+        }
+    }
+
+    LaunchedEffect(bleSample) {
+        val sample = bleSample ?: return@LaunchedEffect
+        if (tuning.enableEskfFusion) {
+            nodeTracker.onImu(sample)
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { bleClient.disconnectAll() }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -157,12 +201,50 @@ fun BrightSpotDetectionApp(
                                     detectedSpotsCount = spots.size
                                     detectedSpots = spots
                                     imageSize = size
-                                    pnpResult = calculateRgbPnpResult(
+                                    if (size == null) {
+                                        pnpResult = null
+                                        visionObservation = null
+                                        trackedNodes = emptyList()
+                                    } else {
+                                    val extras = if (tuning.enableMultiNodeTracking) {
+                                        extractExtraTriangles(
+                                            detector = detector,
+                                            primarySpots = spots,
+                                            maxNodes = tuning.maxTrackedNodes
+                                        )
+                                    } else {
+                                        emptyList()
+                                    }
+                                    val nodes = nodeTracker.updateFromPrimaryTriple(
                                         spots = spots,
                                         imageSize = size,
                                         tuning = tuning,
-                                        pnpCalculator = pnpCalculator
+                                        extraTriples = extras
                                     )
+                                    trackedNodes = nodes
+                                    val primary = selectPrimaryObservation(nodes, spots)
+                                        ?: buildVisionObservation(
+                                            spots = spots,
+                                            imageSize = size,
+                                            tuning = tuning,
+                                            pnpCalculator = pnpCalculator
+                                        )
+                                    visionObservation = primary
+                                    pnpResult = if (primary == null || !primary.accepted) {
+                                        if (!tuning.enableVisionConfidenceGate) {
+                                            calculateRgbPnpResult(
+                                                spots = spots,
+                                                imageSize = size,
+                                                tuning = tuning,
+                                                pnpCalculator = pnpCalculator
+                                            )
+                                        } else {
+                                            null
+                                        }
+                                    } else {
+                                        primary.pnp
+                                    }
+                                    }
                                 },
                                 onBitmapCaptured = { bitmap ->
                                     // 释放旧的bitmap
@@ -392,7 +474,11 @@ fun BrightSpotDetectionApp(
                                         tuning = tuning,
                                         fps = fps,
                                         pnpResult = pnpResult,
-                                        pnpCalculator = pnpCalculator
+                                        pnpCalculator = pnpCalculator,
+                                        visionObservation = visionObservation,
+                                        trackedNodes = trackedNodes,
+                                        bleConnectedCount = bleConnected.size,
+                                        bleScanning = bleScanning
                                     )
                                 }
                             }
@@ -720,9 +806,9 @@ private fun DetectionControlSection(
             IconButton(
                 onClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
-                    if (tuning.knownTriangleEdgeLengthMm > 10f) {
+                    if (tuning.knownTriangleEdgeLengthMm > 1f) {
                         onTuningChange(
-                            tuning.copy(knownTriangleEdgeLengthMm = tuning.knownTriangleEdgeLengthMm - 10f)
+                            tuning.copy(knownTriangleEdgeLengthMm = (tuning.knownTriangleEdgeLengthMm - 1f).coerceAtLeast(1f))
                         )
                     }
                 },
@@ -753,7 +839,7 @@ private fun DetectionControlSection(
                 onClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
                     onTuningChange(
-                        tuning.copy(knownTriangleEdgeLengthMm = tuning.knownTriangleEdgeLengthMm + 10f)
+                        tuning.copy(knownTriangleEdgeLengthMm = tuning.knownTriangleEdgeLengthMm + 1f)
                     )
                 },
                 modifier = Modifier.size(40.dp)
@@ -781,7 +867,11 @@ private fun StatusSection(
     tuning: AppTuningSettings,
     fps: Float,
     pnpResult: PnPDistanceCalculator.PnPResult?,
-    pnpCalculator: PnPDistanceCalculator
+    pnpCalculator: PnPDistanceCalculator,
+    visionObservation: VisionObservation? = null,
+    trackedNodes: List<TrackedNodeState> = emptyList(),
+    bleConnectedCount: Int = 0,
+    bleScanning: Boolean = false
 ) {
     Column(
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -857,6 +947,67 @@ private fun StatusSection(
                 text = "%.1f".format(fps),
                 color = if (fps > 20f) Color(0xFF2CA36B) else if (fps > 10f) Color(0xFFFF9800) else Color(0xFFE35D5B),
                 style = MaterialTheme.typography.titleLarge
+            )
+        }
+
+        visionObservation?.let { obs ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column {
+                    Text(
+                        text = "CONFIDENCE",
+                        color = FlatUiColors.TextMuted,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                    Text(
+                        text = "%.0f%%".format(obs.confidence * 100f),
+                        color = if (obs.accepted) Color(0xFF2CA36B) else Color(0xFFE35D5B),
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = "VISION GATE",
+                        color = FlatUiColors.TextMuted,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                    Text(
+                        text = if (obs.accepted) "PASS" else "REJECT",
+                        color = if (obs.accepted) Color(0xFF2CA36B) else Color(0xFFE35D5B),
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                }
+            }
+        }
+
+        if (trackedNodes.isNotEmpty()) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "NODES ${trackedNodes.size}",
+                    color = FlatUiColors.TextMuted,
+                    style = MaterialTheme.typography.labelSmall
+                )
+                trackedNodes.take(6).forEach { node ->
+                    val idText = node.nodeId?.toString() ?: "--"
+                    val calib = if (node.needsVisualCalibration) " · NEED VIS" else ""
+                    Text(
+                        text = "#${node.trackKey} id=$idText conf=${
+                            "%.0f".format((node.observation?.confidence ?: 0f) * 100f)
+                        }%$calib",
+                        color = FlatUiColors.TextPrimary,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        }
+
+        if (tuning.enableBleImu) {
+            Text(
+                text = if (bleScanning) "BLE SCAN… ($bleConnectedCount)" else "BLE $bleConnectedCount",
+                color = if (bleConnectedCount > 0) Color(0xFF2CA36B) else FlatUiColors.TextMuted,
+                style = MaterialTheme.typography.labelMedium
             )
         }
 
@@ -1176,6 +1327,21 @@ private fun SettingsOverviewContent(
                 checked = tuning.enableRoiOptimization,
                 onCheckedChange = { onTuningChange(tuning.copy(enableRoiOptimization = it)) }
             )
+            BooleanSettingRow(
+                title = "GMM 软分割",
+                description = "在 HSV 相似度上叠加双高斯颜色后验，提升光照变化下的稳定性。",
+                checked = tuning.enableGmmSoftSegment,
+                onCheckedChange = { onTuningChange(tuning.copy(enableGmmSoftSegment = it)) }
+            )
+            FloatSliderSetting(
+                title = "GMM 融合权重",
+                description = "越大越依赖 GMM 后验，越小越接近原 HSV 相似度。",
+                value = tuning.gmmBlend,
+                valueText = "%.2f".format(tuning.gmmBlend),
+                range = 0f..1f,
+                steps = 19,
+                onValueChange = { onTuningChange(tuning.copy(gmmBlend = it)) }
+            )
             FloatSliderSetting(
                 title = "检测阈值",
                 description = "亮点候选最低得分。升高可减少误检，降低可提升弱光目标通过率。",
@@ -1211,6 +1377,90 @@ private fun SettingsOverviewContent(
                 range = -6..6,
                 step = 1,
                 onValueChange = { onTuningChange(tuning.copy(exposureCompensation = it)) }
+            )
+        }
+
+        SettingsSection(
+            title = "视觉融合与多节点",
+            description = "置信度门控、时域身份解码、多节点跟踪、ESKF 稀疏校正与 IK 后处理。"
+        ) {
+            BooleanSettingRow(
+                title = "视觉置信度门控",
+                description = "综合几何/重投影/纯度评分，低质量观测不进入位姿输出与融合。",
+                checked = tuning.enableVisionConfidenceGate,
+                onCheckedChange = { onTuningChange(tuning.copy(enableVisionConfidenceGate = it)) }
+            )
+            FloatSliderSetting(
+                title = "最低置信度",
+                description = "低于该阈值的视觉观测将被拒绝。",
+                value = tuning.visionMinConfidence,
+                valueText = "%.2f".format(tuning.visionMinConfidence),
+                range = 0.1f..0.95f,
+                steps = 16,
+                onValueChange = { onTuningChange(tuning.copy(visionMinConfidence = it)) }
+            )
+            FloatSliderSetting(
+                title = "边长残差上限",
+                description = "PnP 恢复的三边与已知边长平均偏差超过该值则拒收（毫米）。",
+                value = tuning.visionMaxReprojectionErrorMm,
+                valueText = "%.0f mm".format(tuning.visionMaxReprojectionErrorMm),
+                range = 5f..60f,
+                steps = 10,
+                onValueChange = { onTuningChange(tuning.copy(visionMaxReprojectionErrorMm = it)) }
+            )
+            BooleanSettingRow(
+                title = "时域身份解码",
+                description = "对编码灯亮度序列做同步头相关 + CRC，确认节点 ID。",
+                checked = tuning.enableIdentityDecode,
+                onCheckedChange = { onTuningChange(tuning.copy(enableIdentityDecode = it)) }
+            )
+            IntSliderSetting(
+                title = "身份确认次数",
+                description = "连续成功解码同一 ID 达到该次数后才锁定身份。",
+                value = tuning.identityConfirmNeeded,
+                valueText = tuning.identityConfirmNeeded.toString(),
+                range = 1..8,
+                step = 1,
+                onValueChange = { onTuningChange(tuning.copy(identityConfirmNeeded = it)) }
+            )
+            BooleanSettingRow(
+                title = "多节点跟踪",
+                description = "RANSAC 多三角形提取 + 每节点独立 Tracker。",
+                checked = tuning.enableMultiNodeTracking,
+                onCheckedChange = { onTuningChange(tuning.copy(enableMultiNodeTracking = it)) }
+            )
+            IntSliderSetting(
+                title = "最大节点数",
+                description = "同时跟踪的节点上限（建议先 3～6）。",
+                value = tuning.maxTrackedNodes,
+                valueText = tuning.maxTrackedNodes.toString(),
+                range = 1..12,
+                step = 1,
+                onValueChange = { onTuningChange(tuning.copy(maxTrackedNodes = it)) }
+            )
+            BooleanSettingRow(
+                title = "人体拓扑先验",
+                description = "解码 ID 与空间角色冲突时暂缓切换，抑制 ID 抖动。",
+                checked = tuning.enableTopologyPrior,
+                onCheckedChange = { onTuningChange(tuning.copy(enableTopologyPrior = it)) }
+            )
+            BooleanSettingRow(
+                title = "ESKF 稀疏融合",
+                description = "IMU 预测 + 高置信视觉更新；协方差过大时提示需要视觉校准。",
+                checked = tuning.enableEskfFusion,
+                onCheckedChange = { onTuningChange(tuning.copy(enableEskfFusion = it)) }
+            )
+            BooleanSettingRow(
+                title = "IK 软约束",
+                description = "多节点位姿后按骨骼长度做 LM 软约束，消除异常姿态。",
+                checked = tuning.enableIkPostProcess,
+                onCheckedChange = { onTuningChange(tuning.copy(enableIkPostProcess = it)) }
+            )
+            BooleanSettingRow(
+                title = "BLE IMU 接入",
+                description = "扫描名为 TriDot* 的节点并接收 IMU 包（需固件配合）。",
+                checked = tuning.enableBleImu,
+                onCheckedChange = { onTuningChange(tuning.copy(enableBleImu = it)) }
             )
         }
 
@@ -1445,7 +1695,7 @@ private fun SettingsOverviewContent(
             FloatSliderSetting("校准高亮像素比例", "取色时只平均最亮部分像素，避免背景污染。", tuning.sampleTopPercent, "%.2f".format(tuning.sampleTopPercent), 0.01f..0.8f, 19) {
                 onTuningChange(tuning.copy(sampleTopPercent = it))
             }
-            FloatSliderSetting("三点边长", "已知 RGB 三点构成的实际边长，直接影响距离解算结果。", tuning.knownTriangleEdgeLengthMm, "%.0f mm".format(tuning.knownTriangleEdgeLengthMm), 10f..1000f, 19) {
+            FloatSliderSetting("三点边长", "已知 RGB 三点构成的实际边长（节点设计为 18mm），直接影响距离解算结果。", tuning.knownTriangleEdgeLengthMm, "%.0f mm".format(tuning.knownTriangleEdgeLengthMm), 5f..100f, 94) {
                 onTuningChange(tuning.copy(knownTriangleEdgeLengthMm = it))
             }
             FloatSliderSetting("估算视场角", "用于在无真实焦距时估算相机焦距，直接影响 PnP 距离尺度。", tuning.estimatedFovDegrees, "%.1f°".format(tuning.estimatedFovDegrees), 20f..120f, 19) {

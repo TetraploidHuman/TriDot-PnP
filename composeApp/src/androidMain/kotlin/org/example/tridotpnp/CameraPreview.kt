@@ -709,9 +709,6 @@ fun CameraPreview(
                                             }
                                         },
                                         onSpotsDetected = { spots, size, foundInManualRoi ->
-                                            brightSpots = spots
-                                            previewSize = size
-
                                             // 如果在手动ROI中找到三色点，清除手动ROI并隐藏显示框
                                             if (foundInManualRoi && spots.size == 3) {
                                                 mainHandler.post {
@@ -721,7 +718,7 @@ fun CameraPreview(
                                                 }
                                             }
 
-                                            // 仅在启用ROI优化时更新跟踪的三色点位置
+                                            // 仅在启用ROI优化时更新跟踪的三色点位置（分析线程可读下一帧）
                                             if (currentEnableRoiOptimization.value) {
                                                 if (spots.size == 3) {
                                                     var redSpot: BrightSpot? = null
@@ -736,7 +733,6 @@ fun CameraPreview(
                                                         }
                                                     }
                                                     if (redSpot != null && greenSpot != null && blueSpot != null) {
-                                                        // 存储三个点的位置
                                                         lastTriSpots = Triple(
                                                             redSpot.position,
                                                             greenSpot.position,
@@ -744,17 +740,20 @@ fun CameraPreview(
                                                         )
                                                         lastTriSpotsImageSize = size
                                                     } else {
-                                                        // 如果找不到三个完整的颜色点，清除跟踪
                                                         lastTriSpots = null
                                                         lastTriSpotsImageSize = null
                                                     }
                                                 } else {
-                                                    // 如果不是三色模式或未找到三个点，清除跟踪
                                                     lastTriSpots = null
                                                     lastTriSpotsImageSize = null
                                                 }
                                             }
-                                            onBrightSpotsDetected(spots, size)
+                                            // Compose state updates must run on main thread.
+                                            mainHandler.post {
+                                                brightSpots = spots
+                                                previewSize = size
+                                                onBrightSpotsDetected(spots, size)
+                                            }
                                         },
                                         captureBitmapForCalibration = currentCaptureBitmapForCalibration.value,
                                         onBitmapCaptured = onBitmapCaptured

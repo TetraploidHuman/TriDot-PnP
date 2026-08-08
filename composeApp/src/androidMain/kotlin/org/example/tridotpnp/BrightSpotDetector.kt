@@ -43,6 +43,17 @@ class BrightSpotDetector {
     // 颜色校准数据（可选）
     private var calibration: ColorCalibration? = null
 
+    /** Optional GMM soft-segmentation prior blended into HSV scores. */
+    val gmmColorModel: GmmColorModel = GmmColorModel()
+
+    /** Latest per-color Top-N candidates (unrefined), for multi-node RANSAC extraction. */
+    var lastRedCandidates: List<BrightSpot> = emptyList()
+        private set
+    var lastGreenCandidates: List<BrightSpot> = emptyList()
+        private set
+    var lastBlueCandidates: List<BrightSpot> = emptyList()
+        private set
+
     // ===== HSV 目标缓存（避免每次都转）=====
     private val targetRedHSV = FloatArray(3)
     private val targetGreenHSV = FloatArray(3)
@@ -114,6 +125,7 @@ class BrightSpotDetector {
     fun setCalibration(calibrationData: ColorCalibration?) {
         calibration = calibrationData
         targetsPrepared = false
+        gmmColorModel.fitFromCalibration(calibrationData)
     }
 
     // ===== HSV 工具 =====
@@ -358,7 +370,32 @@ class BrightSpotDetector {
                 }
             }
 
-            if (reds.isEmpty() || greens.isEmpty() || blues.isEmpty()) return emptyList()
+            if (reds.isEmpty() || greens.isEmpty() || blues.isEmpty()) {
+                lastRedCandidates = emptyList()
+                lastGreenCandidates = emptyList()
+                lastBlueCandidates = emptyList()
+                return emptyList()
+            }
+
+            fun candidateToSpot(c: Candidate, color: LedColor): BrightSpot {
+                val brightness = when (color) {
+                    LedColor.RED -> c.r
+                    LedColor.GREEN -> c.g
+                    LedColor.BLUE -> c.b
+                    else -> c.score
+                }
+                return BrightSpot(
+                    position = Offset(c.x.toFloat(), c.y.toFloat()),
+                    brightness = brightness,
+                    color = color,
+                    redIntensity = c.r,
+                    greenIntensity = c.g,
+                    blueIntensity = c.b
+                )
+            }
+            lastRedCandidates = reds.map { candidateToSpot(it, LedColor.RED) }
+            lastGreenCandidates = greens.map { candidateToSpot(it, LedColor.GREEN) }
+            lastBlueCandidates = blues.map { candidateToSpot(it, LedColor.BLUE) }
 
             var bestTripleR: Candidate? = null
             var bestTripleG: Candidate? = null
@@ -555,9 +592,15 @@ class BrightSpotDetector {
         val hsv = FloatArray(3)
         Color.RGBToHSV(clamp255(avgR), clamp255(avgG), clamp255(avgB), hsv)
 
-        val simR = hsvSimilarity(hsv, targetRedHSV)
-        val simG = hsvSimilarity(hsv, targetGreenHSV)
-        val simB = hsvSimilarity(hsv, targetBlueHSV)
+        val simR = gmmColorModel.blendSimilarity(
+            hsvSimilarity(hsv, targetRedHSV), LedColor.RED, hsv[0], hsv[1], hsv[2]
+        )
+        val simG = gmmColorModel.blendSimilarity(
+            hsvSimilarity(hsv, targetGreenHSV), LedColor.GREEN, hsv[0], hsv[1], hsv[2]
+        )
+        val simB = gmmColorModel.blendSimilarity(
+            hsvSimilarity(hsv, targetBlueHSV), LedColor.BLUE, hsv[0], hsv[1], hsv[2]
+        )
 
         return Triple(simR * weightedBrightness, simG * weightedBrightness, simB * weightedBrightness)
     }

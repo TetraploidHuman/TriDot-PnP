@@ -44,6 +44,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -1576,6 +1577,7 @@ fun CameraPreview(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .fillMaxWidth()
+                .navigationBarsPadding()
                 .padding(horizontal = 12.dp, vertical = 6.dp)
         ) {
             val minBarWidth = 24.dp
@@ -1591,6 +1593,8 @@ fun CameraPreview(
                     text = "${"%.1f".format(zoomRatioDisplay)}x",
                     color = Color.White,
                 )
+                // Single dark track + white fill (right-aligned). Avoid stacking a second
+                // semi-white full-width layer that reads as an extra contrast strip.
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1602,7 +1606,7 @@ fun CameraPreview(
                             .fillMaxWidth()
                             .height(4.dp)
                             .background(
-                                color = Color(0x40FFFFFF),
+                                color = Color(0x99000000),
                                 shape = RoundedCornerShape(4.dp)
                             )
                     )

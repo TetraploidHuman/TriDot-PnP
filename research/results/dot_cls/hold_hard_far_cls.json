@@ -1,0 +1,89 @@
+{
+  "subset": "holdout_hard",
+  "degrade": "phone_far",
+  "n_sequences": 12,
+  "methods": {
+    "classic2": {
+      "label": "classic2",
+      "n_frames": 1080,
+      "det10_all": 0.10833333333333334,
+      "buckets": {
+        "0-20": {
+          "n": 16,
+          "det10_all": 0.0,
+          "t_err_med": null
+        },
+        "20-40": {
+          "n": 0,
+          "det10_all": null,
+          "t_err_med": null
+        },
+        "40-80": {
+          "n": 128,
+          "det10_all": 0.046875,
+          "t_err_med": 28.131713453709132
+        },
+        "80+": {
+          "n": 936,
+          "det10_all": 0.11858974358974358,
+          "t_err_med": 8.250971911158228
+        }
+      },
+      "factors": {
+        "clutter": {
+          "n": 360,
+          "det10_all": 0.14166666666666666
+        },
+        "desk": {
+          "n": 360,
+          "det10_all": 0.17777777777777778
+        },
+        "room": {
+          "n": 360,
+          "det10_all": 0.005555555555555556
+        }
+      }
+    },
+    "classic3_union": {
+      "label": "classic3_union",
+      "n_frames": 1080,
+      "det10_all": 0.7861111111111111,
+      "buckets": {
+        "0-20": {
+          "n": 16,
+          "det10_all": 0.0,
+          "t_err_med": null
+        },
+        "20-40": {
+          "n": 0,
+          "det10_all": null,
+          "t_err_med": null
+        },
+        "40-80": {
+          "n": 128,
+          "det10_all": 0.59375,
+          "t_err_med": 12.17278541263478
+        },
+        "80+": {
+          "n": 936,
+          "det10_all": 0.8258547008547008,
+          "t_err_med": 7.403560139157483
+        }
+      },
+      "factors": {
+        "clutter": {
+          "n": 360,
+          "det10_all": 0.6777777777777778
+        },
+        "desk": {
+          "n": 360,
+          "det10_all": 0.9111111111111111
+        },
+        "room": {
+          "n": 360,
+          "det10_all": 0.7694444444444445
+        }
+      }
+    }
+  }
+}

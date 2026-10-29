@@ -1,0 +1,48 @@
+{
+  "subset": "hard_test",
+  "degrade": "phone_harsh",
+  "n_sequences": 12,
+  "methods": {
+    "classic3_union": {
+      "label": "classic3_union",
+      "n_frames": 1080,
+      "det10_all": 0.6888888888888889,
+      "buckets": {
+        "0-20": {
+          "n": 0,
+          "det10_all": null,
+          "t_err_med": null
+        },
+        "20-40": {
+          "n": 0,
+          "det10_all": null,
+          "t_err_med": null
+        },
+        "40-80": {
+          "n": 65,
+          "det10_all": 0.23076923076923078,
+          "t_err_med": 16.474853034399825
+        },
+        "80+": {
+          "n": 1015,
+          "det10_all": 0.7182266009852217,
+          "t_err_med": 9.228909784042074
+        }
+      },
+      "factors": {
+        "clutter": {
+          "n": 360,
+          "det10_all": 0.6166666666666667
+        },
+        "crosscolor": {
+          "n": 360,
+          "det10_all": 0.6333333333333333
+        },
+        "desk": {
+          "n": 360,
+          "det10_all": 0.8166666666666667
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,35 @@
+{
+ "note": "C (ROI upsample) A/B, matched-candidate pixel error, hard_test 6 seqs; clean/phone_far",
+ "trigger_share_area_le3": {
+  "clean": 0.0,
+  "phone_far": 0.0
+ },
+ "matched_area_median_px": {
+  "clean": 400.0,
+  "phone_far": 367.5
+ },
+ "clean": {
+  "tiny(n=1490)": {
+   "median": 1.0085,
+   "mean": 1.2776
+  },
+  "all(n=1532)": {
+   "median": 0.9241,
+   "mean": 1.1391
+  },
+  "off(n=1490)": {
+   "median": 1.0085,
+   "mean": 1.2776
+  }
+ },
+ "phone_far": {
+  "tiny(n=1447)": {
+   "median": 0.7863,
+   "mean": 1.0947
+  },
+  "all(n=1465)": {
+   "median": 1.0358,
+   "mean": 1.2325
+  }
+ }
+}

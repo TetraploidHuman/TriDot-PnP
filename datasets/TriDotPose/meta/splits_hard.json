@@ -1,0 +1,106 @@
+{
+  "dataset": "TriDot-Pose-1.0",
+  "description": "Harder realistic indoor/phone-like stress set (eval only)",
+  "hard_test": [
+    "syn_clutter_0208",
+    "syn_clutter_0209",
+    "syn_clutter_0210",
+    "syn_clutter_0211",
+    "syn_crosscolor_0224",
+    "syn_crosscolor_0225",
+    "syn_crosscolor_0226",
+    "syn_crosscolor_0227",
+    "syn_desk_0204",
+    "syn_desk_0205",
+    "syn_desk_0206",
+    "syn_desk_0207",
+    "syn_far_0228",
+    "syn_far_0229",
+    "syn_far_0230",
+    "syn_far_0231",
+    "syn_handheld_0216",
+    "syn_handheld_0217",
+    "syn_handheld_0218",
+    "syn_handheld_0219",
+    "syn_hardmix_0232",
+    "syn_hardmix_0233",
+    "syn_hardmix_0234",
+    "syn_hardmix_0235",
+    "syn_hardmix_0236",
+    "syn_hardmix_0237",
+    "syn_hardmix_0238",
+    "syn_hardmix_0239",
+    "syn_occlude_hand_0220",
+    "syn_occlude_hand_0221",
+    "syn_occlude_hand_0222",
+    "syn_occlude_hand_0223",
+    "syn_room_0200",
+    "syn_room_0201",
+    "syn_room_0202",
+    "syn_room_0203",
+    "syn_screen_0212",
+    "syn_screen_0213",
+    "syn_screen_0214",
+    "syn_screen_0215"
+  ],
+  "by_factor": {
+    "room": [
+      "syn_room_0200",
+      "syn_room_0201",
+      "syn_room_0202",
+      "syn_room_0203"
+    ],
+    "desk": [
+      "syn_desk_0204",
+      "syn_desk_0205",
+      "syn_desk_0206",
+      "syn_desk_0207"
+    ],
+    "clutter": [
+      "syn_clutter_0208",
+      "syn_clutter_0209",
+      "syn_clutter_0210",
+      "syn_clutter_0211"
+    ],
+    "screen": [
+      "syn_screen_0212",
+      "syn_screen_0213",
+      "syn_screen_0214",
+      "syn_screen_0215"
+    ],
+    "handheld": [
+      "syn_handheld_0216",
+      "syn_handheld_0217",
+      "syn_handheld_0218",
+      "syn_handheld_0219"
+    ],
+    "occlude_hand": [
+      "syn_occlude_hand_0220",
+      "syn_occlude_hand_0221",
+      "syn_occlude_hand_0222",
+      "syn_occlude_hand_0223"
+    ],
+    "crosscolor": [
+      "syn_crosscolor_0224",
+      "syn_crosscolor_0225",
+      "syn_crosscolor_0226",
+      "syn_crosscolor_0227"
+    ],
+    "far": [
+      "syn_far_0228",
+      "syn_far_0229",
+      "syn_far_0230",
+      "syn_far_0231"
+    ],
+    "hardmix": [
+      "syn_hardmix_0232",
+      "syn_hardmix_0233",
+      "syn_hardmix_0234",
+      "syn_hardmix_0235",
+      "syn_hardmix_0236",
+      "syn_hardmix_0237",
+      "syn_hardmix_0238",
+      "syn_hardmix_0239"
+    ]
+  }
+}

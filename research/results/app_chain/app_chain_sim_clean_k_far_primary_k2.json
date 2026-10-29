@@ -1,0 +1,24 @@
+{
+ "clean": {
+  "frames": 540,
+  "det10_all_visible": 0.5771,
+  "det10_observable": 0.5771,
+  "n_all_visible": 525,
+  "n_observable": 525,
+  "pose_coverage": 0.9926,
+  "trigger": 359,
+  "rescue": 114,
+  "t_err_all": {
+   "n": 536,
+   "median": 39.48,
+   "p90": 412.78,
+   "within50": 0.597
+  },
+  "t_err_clean": {
+   "n": 523,
+   "median": 39.3,
+   "p90": 370.01,
+   "within50": 0.602
+  }
+ }
+}

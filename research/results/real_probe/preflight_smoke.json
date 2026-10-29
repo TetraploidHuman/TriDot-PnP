@@ -1,0 +1,8 @@
+{
+ "video": "smoke_real_desk.mp4",
+ "frames": 60,
+ "detected": 60,
+ "detect_rate": 1.0,
+ "drift_median_px": 6.057641657285373,
+ "drift_p95_px": 75.61656565351764
+}

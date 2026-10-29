@@ -1,35 +1,28 @@
-# TriDot-PnP
+This is a Kotlin Multiplatform project targeting Android.
 
-可穿戴视觉–惯性位姿感知：Android 相机伴侣应用 + ESP32-C3 节点固件。
+* [/composeApp](./composeApp/src) is for code that will be shared across your Compose Multiplatform applications.
+  It contains several subfolders:
+    - [commonMain](./composeApp/src/commonMain/kotlin) is for code that’s common for all targets.
+    - Other folders are for Kotlin code that will be compiled for only the platform indicated in the folder name.
+      For example, if you want to use Apple’s CoreCrypto for the iOS part of your Kotlin app,
+      the [iosMain](./composeApp/src/iosMain/kotlin) folder would be the right place for such calls.
+      Similarly, if you want to edit the Desktop (JVM) specific part, the [jvmMain](./composeApp/src/jvmMain/kotlin)
+      folder is the appropriate location.
 
-## 仓库结构
+### Build and Run Android Application
 
-| 路径 | 说明 |
-|------|------|
-| [`composeApp/`](./composeApp) | Android 伴侣应用（Compose）：RGB LED PnP、多节点跟踪、ESKF、BLE |
-| [`firmware/`](./firmware) | **ESP-IDF** 固件（**ESP32-C3**：双 IMU、LED 身份编码、BLE） |
-| [`firmware/micropython/`](./firmware/micropython) | 可选 MicroPython LED 点亮脚本 |
+To build and run the development version of the Android app, use the run configuration from the run widget
+in your IDE’s toolbar or build it directly from the terminal:
 
-## Android 应用
+- on macOS/Linux
+  ```shell
+  ./gradlew :composeApp:assembleDebug
+  ```
+- on Windows
+  ```shell
+  .\gradlew.bat :composeApp:assembleDebug
+  ```
 
-```shell
-.\gradlew.bat :composeApp:assembleDebug
-```
+---
 
-每次推送到 `main` 时，CI 会构建 debug APK。打标签发布（`v*`）时会产出可安装的 release APK。
-
-> 注意：若未配置正式签名密钥，release 包会回退为 debug 签名，适合内测，不适合上架商店。
-
-## ESP32-C3 固件
-
-详见 [`firmware/README.md`](./firmware/README.md)。
-
-```shell
-cd firmware
-idf.py set-target esp32c3
-idf.py build flash monitor
-```
-
-## 协议
-
-共享 BLE + LED 身份格式：[`firmware/PROTOCOL.md`](./firmware/PROTOCOL.md)。
+Learn more about [Kotlin Multiplatform](https://www.jetbrains.com/help/kotlin-multiplatform-dev/get-started.html)…

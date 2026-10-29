@@ -1,0 +1,48 @@
+{
+  "subset": "hard_test",
+  "degrade": null,
+  "n_sequences": 12,
+  "methods": {
+    "classic3_union": {
+      "label": "classic3_union",
+      "n_frames": 1080,
+      "det10_all": 0.8805555555555555,
+      "buckets": {
+        "0-20": {
+          "n": 0,
+          "det10_all": null,
+          "t_err_med": null
+        },
+        "20-40": {
+          "n": 0,
+          "det10_all": null,
+          "t_err_med": null
+        },
+        "40-80": {
+          "n": 65,
+          "det10_all": 0.7538461538461538,
+          "t_err_med": 11.813977105115736
+        },
+        "80+": {
+          "n": 1015,
+          "det10_all": 0.8886699507389163,
+          "t_err_med": 8.833701859225862
+        }
+      },
+      "factors": {
+        "clutter": {
+          "n": 360,
+          "det10_all": 0.8583333333333333
+        },
+        "crosscolor": {
+          "n": 360,
+          "det10_all": 0.8388888888888889
+        },
+        "desk": {
+          "n": 360,
+          "det10_all": 0.9444444444444444
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "model": "DotClassifier (1ch 15x15 patch -> 16-32-64 conv + GAP -> 1)",
+  "params": 23585,
+  "ckpt": "research/results/dot_cls/dot_cls_scaled.pt",
+  "ckpt_sha256_note": "see git",
+  "dataset": "research/results/dot_cls/dataset_scaled.npz",
+  "dataset_samples": 12927,
+  "dataset_positives": 3862,
+  "dataset_sequences": 40,
+  "dataset_frames": 2180,
+  "degrade_presets": [
+    "clean",
+    "phone_easy",
+    "phone_far",
+    "phone_harsh"
+  ],
+  "label_rule": "positive if candidate within 4 px of the matching GT dot (vis>=1); negative if >= 12 px; 4-12 px ignored",
+  "seed": 0,
+  "best_epoch": 8,
+  "val_loss": 0.18766,
+  "val_acc": 0.92625,
+  "inference_ms_per_36_patches": 1.38,
+  "integration": "classic_v3 ClassicV3Detector(dot_cls_path=..., dot_cls_w=0.5): score = (1-w)*classic_score + w*P(dot)",
+  "patch_normalisation": "window = 15 * clip(r_expected/3, 0.45, 2.5) px (GT depth), resized to 15x15",
+  "inference": "same 23,585-param net, ~1.4 ms / 36 candidates"
+}

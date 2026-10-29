@@ -1,0 +1,130 @@
+{
+  "subset": "hard_test",
+  "degrade": "phone_harsh",
+  "n_sequences": 12,
+  "methods": {
+    "b0": {
+      "label": "b0",
+      "n_frames": 1080,
+      "det10_all": 0.425,
+      "buckets": {
+        "0-20": {
+          "n": 0,
+          "det10_all": null,
+          "t_err_med": null
+        },
+        "20-40": {
+          "n": 0,
+          "det10_all": null,
+          "t_err_med": null
+        },
+        "40-80": {
+          "n": 65,
+          "det10_all": 0.0,
+          "t_err_med": null
+        },
+        "80+": {
+          "n": 1015,
+          "det10_all": 0.4522167487684729,
+          "t_err_med": 4.9581786250342255
+        }
+      },
+      "factors": {
+        "clutter": {
+          "n": 360,
+          "det10_all": 0.49722222222222223
+        },
+        "crosscolor": {
+          "n": 360,
+          "det10_all": 0.3638888888888889
+        },
+        "desk": {
+          "n": 360,
+          "det10_all": 0.41388888888888886
+        }
+      }
+    },
+    "classic2": {
+      "label": "classic2",
+      "n_frames": 1080,
+      "det10_all": 0.33611111111111114,
+      "buckets": {
+        "0-20": {
+          "n": 0,
+          "det10_all": null,
+          "t_err_med": null
+        },
+        "20-40": {
+          "n": 0,
+          "det10_all": null,
+          "t_err_med": null
+        },
+        "40-80": {
+          "n": 65,
+          "det10_all": 0.015384615384615385,
+          "t_err_med": 21.623637057675577
+        },
+        "80+": {
+          "n": 1015,
+          "det10_all": 0.3566502463054187,
+          "t_err_med": 12.677586136356354
+        }
+      },
+      "factors": {
+        "clutter": {
+          "n": 360,
+          "det10_all": 0.3277777777777778
+        },
+        "crosscolor": {
+          "n": 360,
+          "det10_all": 0.21944444444444444
+        },
+        "desk": {
+          "n": 360,
+          "det10_all": 0.46111111111111114
+        }
+      }
+    },
+    "classic3_union": {
+      "label": "classic3_union",
+      "n_frames": 1080,
+      "det10_all": 0.5462962962962963,
+      "buckets": {
+        "0-20": {
+          "n": 0,
+          "det10_all": null,
+          "t_err_med": null
+        },
+        "20-40": {
+          "n": 0,
+          "det10_all": null,
+          "t_err_med": null
+        },
+        "40-80": {
+          "n": 65,
+          "det10_all": 0.2,
+          "t_err_med": 17.573574260392675
+        },
+        "80+": {
+          "n": 1015,
+          "det10_all": 0.5684729064039409,
+          "t_err_med": 10.088453479943837
+        }
+      },
+      "factors": {
+        "clutter": {
+          "n": 360,
+          "det10_all": 0.5194444444444445
+        },
+        "crosscolor": {
+          "n": 360,
+          "det10_all": 0.5138888888888888
+        },
+        "desk": {
+          "n": 360,
+          "det10_all": 0.6055555555555555
+        }
+      }
+    }
+  }
+}

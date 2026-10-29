@@ -1,22 +1,41 @@
+# ---- build / IDE / gradle ----
 *.iml
-.kotlin
-.gradle
-**/build/
-xcuserdata
-!src/**/build/
-local.properties
-.idea
-.DS_Store
-captures
-.externalNativeBuild
-.cxx
-*.xcodeproj/*
-!*.xcodeproj/project.pbxproj
-!*.xcodeproj/xcshareddata/
-!*.xcodeproj/project.xcworkspace/
-!*.xcworkspace/contents.xcworkspacedata
-**/xcshareddata/WorkspaceSettings.xcsettings
-node_modules/
+.gradle/
+.kotlin/
+build/
+composeApp/build/
 composeApp/release/
+.idea/
+local.properties
+captures/
+
+# ---- python ----
+research/.venv/
+__pycache__/
+*.pyc
+# recovered bytecode is the only surviving source for a few legacy modules
+!research/baseline_b0/__pycache__/
+!research/baseline_b0/__pycache__/*.pyc
+!research/baseline_b1/__pycache__/
+!research/baseline_b1/__pycache__/*.pyc
+!research/tridot_synth/__pycache__/
+!research/tridot_synth/__pycache__/*.pyc
+!research/label_tool/__pycache__/
+!research/label_tool/__pycache__/*.pyc
+
+# ---- data / weights / media / experiment artifacts ----
+datasets/
+research/results/
+research/**/find_cache/
+research/label_tool/work/
+*.pt
+*.pth
+*.npz
+*.mp4
+*.png
+*.jpg
+*.jpeg
+
+# local release artifacts (APK attached to GitHub Releases, not committed)
+dist/
 *.apk
-!**/src/**/*.apk

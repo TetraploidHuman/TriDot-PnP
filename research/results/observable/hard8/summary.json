@@ -1,0 +1,394 @@
+{
+  "provenance": {
+    "created_utc": "2026-10-29T00:25:59+00:00",
+    "argv": [
+      "/home/miaox99/TriDotPnP/research/tridot_temporal/eval_v2.py",
+      "--subset",
+      "hard_test",
+      "--limit-seq",
+      "8",
+      "--methods",
+      "b0,classic2,classic3,classic3_dotcls",
+      "--dot-cls",
+      "research/results/dot_cls/dot_cls_scaled.pt",
+      "--out",
+      "research/results/observable/hard8"
+    ],
+    "cwd": "/home/miaox99/TriDotPnP",
+    "dataset_root": "/home/miaox99/TriDotPnP/datasets/TriDotPose",
+    "subset": "hard_test",
+    "n_sequences": 8,
+    "splits_sha256": "42916bfc1dd0bb33a7c2192469a637c9317d83dac3b40ae0cae5276979e0c84e",
+    "find_ckpt": null,
+    "find_ckpt_sha256": null,
+    "geom_ckpt": null,
+    "geom_ckpt_sha256": null,
+    "device": "cpu",
+    "seed": 0,
+    "method_cfg": {
+      "b0": {
+        "top_k": 5,
+        "roi": true
+      },
+      "classic2": {
+        "top_k": 6,
+        "temporal": true,
+        "detector": "classic2"
+      },
+      "classic3": {
+        "top_k": 6,
+        "temporal": true,
+        "detector": "classic3",
+        "contrast": true,
+        "scale_adaptive": true,
+        "roi_upsample": true
+      },
+      "classic3_dotcls": {
+        "top_k": 6,
+        "temporal": true,
+        "detector": "classic3_dotcls",
+        "contrast": true,
+        "scale_adaptive": true,
+        "roi_upsample": true,
+        "dot_cls": "research/results/dot_cls/dot_cls_scaled.pt"
+      }
+    },
+    "versions": {
+      "python": "3.11.15",
+      "torch": "2.14.1+cpu",
+      "numpy": "2.4.6",
+      "opencv": "5.0.0"
+    },
+    "elapsed_s": 178.1
+  },
+  "results": {
+    "b0": {
+      "method": "b0",
+      "n_frames": 720,
+      "n_seqs": 8,
+      "n_all_visible_frames": 705,
+      "n_vis2_points": 2145,
+      "det": {
+        "det10_all": 0.14444444444444443,
+        "det10_all_ci95": [
+          0.05,
+          0.2222222222222222
+        ],
+        "det10_legacy": 0.1475177304964539,
+        "det10_observable": 0.1475177304964539,
+        "n_observable_frames": 705,
+        "det10_visible_partial": 0.0
+      },
+      "point": {
+        "recall@2": 0.282983682983683,
+        "recall@5": 0.30256410256410254,
+        "recall@10": 0.3076923076923077,
+        "recall@20": 0.3104895104895105,
+        "per_color_recall@10": {
+          "red": 0.4,
+          "green": 0.24583333333333332,
+          "blue": 0.2765957446808511
+        },
+        "occluded_guess@10": 0.0
+      },
+      "pose": {
+        "coverage": 0.9944444444444445,
+        "t_err_all": {
+          "n": 716,
+          "mean_mm": 490.1322077381043,
+          "median_mm": 465.99711338427585,
+          "p90_mm": 1000.0211477441931,
+          "within_50mm": 0.15921787709497207
+        },
+        "t_err_clean": {
+          "n": 702,
+          "mean_mm": 489.8871711830846,
+          "median_mm": 463.28512317021307,
+          "p90_mm": 1009.2812718533927,
+          "within_50mm": 0.1623931623931624
+        },
+        "t_err_clean_ci95_median": [
+          338.4920499061245,
+          651.7935505075047
+        ],
+        "distance_bias_mm": -443.8518574088497,
+        "jitter_mm_per_s": 3831.856490328797,
+        "recovery_frames": 6.0
+      },
+      "latency": {
+        "median_ms": 35.92409851262346,
+        "p90_ms": 89.80885246419348,
+        "fps_est": 27.836467480140314
+      },
+      "by_factor": {
+        "clutter": {
+          "n_frames": 360,
+          "det10_all": 0.075,
+          "det10_legacy": 0.075,
+          "det10_observable": 0.075,
+          "point_recall@10": 0.25925925925925924,
+          "pose_coverage": 0.9916666666666667,
+          "t_err_median_mm": 446.7968265537503
+        },
+        "crosscolor": {
+          "n_frames": 360,
+          "det10_all": 0.21388888888888888,
+          "det10_legacy": 0.22318840579710145,
+          "det10_observable": 0.22318840579710145,
+          "point_recall@10": 0.3568075117370892,
+          "pose_coverage": 0.9972222222222222,
+          "t_err_median_mm": 520.5852667714485
+        }
+      },
+      "completion": {
+        "n_frames": 0
+      }
+    },
+    "classic2": {
+      "method": "classic2",
+      "n_frames": 720,
+      "n_seqs": 8,
+      "n_all_visible_frames": 705,
+      "n_vis2_points": 2145,
+      "det": {
+        "det10_all": 0.7902777777777777,
+        "det10_all_ci95": [
+          0.7027777777777777,
+          0.8944444444444445
+        ],
+        "det10_legacy": 0.8070921985815603,
+        "det10_observable": 0.8070921985815603,
+        "n_observable_frames": 705,
+        "det10_visible_partial": 0.0
+      },
+      "point": {
+        "recall@2": 0.7655011655011655,
+        "recall@5": 0.8568764568764569,
+        "recall@10": 0.8801864801864802,
+        "recall@20": 0.88997668997669,
+        "per_color_recall@10": {
+          "red": 0.8861111111111111,
+          "green": 0.875,
+          "blue": 0.8794326241134752
+        },
+        "occluded_guess@10": 0.0
+      },
+      "pose": {
+        "coverage": 1.0,
+        "t_err_all": {
+          "n": 720,
+          "mean_mm": 135.95609837575498,
+          "median_mm": 12.392315130909742,
+          "p90_mm": 590.8943716578647,
+          "within_50mm": 0.6986111111111111
+        },
+        "t_err_clean": {
+          "n": 705,
+          "mean_mm": 126.99697232818646,
+          "median_mm": 11.891755165720534,
+          "p90_mm": 547.2587484077151,
+          "within_50mm": 0.7134751773049646
+        },
+        "t_err_clean_ci95_median": [
+          7.586183540281746,
+          59.786802938928645
+        ],
+        "distance_bias_mm": -1.9029729156741269,
+        "jitter_mm_per_s": 601.8924234961058,
+        "recovery_frames": 5.0
+      },
+      "latency": {
+        "median_ms": 38.50884400890209,
+        "p90_ms": 43.259183008922264,
+        "fps_est": 25.968060733498778
+      },
+      "by_factor": {
+        "clutter": {
+          "n_frames": 360,
+          "det10_all": 0.7916666666666666,
+          "det10_legacy": 0.7916666666666666,
+          "det10_observable": 0.7916666666666666,
+          "point_recall@10": 0.8787037037037037,
+          "pose_coverage": 1.0,
+          "t_err_median_mm": 14.425142566215023
+        },
+        "crosscolor": {
+          "n_frames": 360,
+          "det10_all": 0.7888888888888889,
+          "det10_legacy": 0.8231884057971014,
+          "det10_observable": 0.8231884057971014,
+          "point_recall@10": 0.8816901408450705,
+          "pose_coverage": 1.0,
+          "t_err_median_mm": 9.767392937577487
+        }
+      },
+      "completion": {
+        "n_frames": 0
+      }
+    },
+    "classic3": {
+      "method": "classic3",
+      "n_frames": 720,
+      "n_seqs": 8,
+      "n_all_visible_frames": 705,
+      "n_vis2_points": 2145,
+      "det": {
+        "det10_all": 0.7736111111111111,
+        "det10_all_ci95": [
+          0.6888888888888889,
+          0.8583333333333333
+        ],
+        "det10_legacy": 0.7900709219858156,
+        "det10_observable": 0.7900709219858156,
+        "n_observable_frames": 705,
+        "det10_visible_partial": 0.0
+      },
+      "point": {
+        "recall@2": 0.6801864801864802,
+        "recall@5": 0.7934731934731934,
+        "recall@10": 0.8517482517482518,
+        "recall@20": 0.862937062937063,
+        "per_color_recall@10": {
+          "red": 0.8444444444444444,
+          "green": 0.8611111111111112,
+          "blue": 0.849645390070922
+        },
+        "occluded_guess@10": 0.0
+      },
+      "pose": {
+        "coverage": 1.0,
+        "t_err_all": {
+          "n": 720,
+          "mean_mm": 117.5318024497772,
+          "median_mm": 10.434185729712862,
+          "p90_mm": 521.7889157746218,
+          "within_50mm": 0.7777777777777778
+        },
+        "t_err_clean": {
+          "n": 705,
+          "mean_mm": 108.9175540267971,
+          "median_mm": 9.99061699864319,
+          "p90_mm": 490.4238923027268,
+          "within_50mm": 0.7943262411347518
+        },
+        "t_err_clean_ci95_median": [
+          8.182657079729985,
+          14.550236122907016
+        ],
+        "distance_bias_mm": -1.630089921962508,
+        "jitter_mm_per_s": 766.3603754637741,
+        "recovery_frames": 5.0
+      },
+      "latency": {
+        "median_ms": 73.25655652675778,
+        "p90_ms": 83.25006319209933,
+        "fps_est": 13.650655277998752
+      },
+      "by_factor": {
+        "clutter": {
+          "n_frames": 360,
+          "det10_all": 0.7472222222222222,
+          "det10_legacy": 0.7472222222222222,
+          "det10_observable": 0.7472222222222222,
+          "point_recall@10": 0.8148148148148148,
+          "pose_coverage": 1.0,
+          "t_err_median_mm": 10.329079673645918
+        },
+        "crosscolor": {
+          "n_frames": 360,
+          "det10_all": 0.8,
+          "det10_legacy": 0.8347826086956521,
+          "det10_observable": 0.8347826086956521,
+          "point_recall@10": 0.8892018779342723,
+          "pose_coverage": 1.0,
+          "t_err_median_mm": 9.456103955433031
+        }
+      },
+      "completion": {
+        "n_frames": 0
+      }
+    },
+    "classic3_dotcls": {
+      "method": "classic3_dotcls",
+      "n_frames": 720,
+      "n_seqs": 8,
+      "n_all_visible_frames": 705,
+      "n_vis2_points": 2145,
+      "det": {
+        "det10_all": 0.8486111111111111,
+        "det10_all_ci95": [
+          0.8055555555555556,
+          0.8977777777777778
+        ],
+        "det10_legacy": 0.8666666666666667,
+        "det10_observable": 0.8666666666666667,
+        "n_observable_frames": 705,
+        "det10_visible_partial": 0.0
+      },
+      "point": {
+        "recall@2": 0.7351981351981351,
+        "recall@5": 0.8624708624708625,
+        "recall@10": 0.9263403263403264,
+        "recall@20": 0.9384615384615385,
+        "per_color_recall@10": {
+          "red": 0.9138888888888889,
+          "green": 0.9388888888888889,
+          "blue": 0.926241134751773
+        },
+        "occluded_guess@10": 0.0
+      },
+      "pose": {
+        "coverage": 1.0,
+        "t_err_all": {
+          "n": 720,
+          "mean_mm": 65.96928222671521,
+          "median_mm": 8.794825954874696,
+          "p90_mm": 121.5287362876394,
+          "within_50mm": 0.85
+        },
+        "t_err_clean": {
+          "n": 705,
+          "mean_mm": 55.77933026071144,
+          "median_mm": 8.338465895602011,
+          "p90_mm": 68.23661334768646,
+          "within_50mm": 0.8680851063829788
+        },
+        "t_err_clean_ci95_median": [
+          7.323035132551314,
+          10.478926332744102
+        ],
+        "distance_bias_mm": -0.05318596459090941,
+        "jitter_mm_per_s": 703.3828895772903,
+        "recovery_frames": 4.0
+      },
+      "latency": {
+        "median_ms": 84.24812098382972,
+        "p90_ms": 100.23652387899348,
+        "fps_est": 11.86970093008883
+      },
+      "by_factor": {
+        "clutter": {
+          "n_frames": 360,
+          "det10_all": 0.8583333333333333,
+          "det10_legacy": 0.8583333333333333,
+          "det10_observable": 0.8583333333333333,
+          "point_recall@10": 0.9185185185185185,
+          "pose_coverage": 1.0,
+          "t_err_median_mm": 8.369014676012313
+        },
+        "crosscolor": {
+          "n_frames": 360,
+          "det10_all": 0.8388888888888889,
+          "det10_legacy": 0.8753623188405797,
+          "det10_observable": 0.8753623188405797,
+          "point_recall@10": 0.9342723004694836,
+          "pose_coverage": 1.0,
+          "t_err_median_mm": 8.289235065411473
+        }
+      },
+      "completion": {
+        "n_frames": 0
+      }
+    }
+  }
+}

@@ -1,0 +1,286 @@
+{
+  "generator": "tridot_synth v1.1.0 (recovered from __pycache__)",
+  "seed_offset": 500000,
+  "sets": {
+    "holdout_easy": [
+      {
+        "seq_id": "syn_hold_easy_0001",
+        "factor": "blur",
+        "seed": 510021
+      },
+      {
+        "seq_id": "syn_hold_easy_0002",
+        "factor": "clean",
+        "seed": 510001
+      },
+      {
+        "seq_id": "syn_hold_easy_0003",
+        "factor": "distractor",
+        "seed": 510041
+      },
+      {
+        "seq_id": "syn_hold_easy_0004",
+        "factor": "light",
+        "seed": 510011
+      },
+      {
+        "seq_id": "syn_hold_easy_0005",
+        "factor": "mixed",
+        "seed": 510061
+      },
+      {
+        "seq_id": "syn_hold_easy_0006",
+        "factor": "noise",
+        "seed": 510051
+      },
+      {
+        "seq_id": "syn_hold_easy_0007",
+        "factor": "occ",
+        "seed": 510031
+      },
+      {
+        "seq_id": "syn_hold_easy_0008",
+        "factor": "blur",
+        "seed": 510022
+      },
+      {
+        "seq_id": "syn_hold_easy_0009",
+        "factor": "clean",
+        "seed": 510002
+      },
+      {
+        "seq_id": "syn_hold_easy_0010",
+        "factor": "distractor",
+        "seed": 510042
+      },
+      {
+        "seq_id": "syn_hold_easy_0011",
+        "factor": "light",
+        "seed": 510012
+      },
+      {
+        "seq_id": "syn_hold_easy_0012",
+        "factor": "mixed",
+        "seed": 510062
+      },
+      {
+        "seq_id": "syn_hold_easy_0013",
+        "factor": "noise",
+        "seed": 510052
+      },
+      {
+        "seq_id": "syn_hold_easy_0014",
+        "factor": "occ",
+        "seed": 510032
+      },
+      {
+        "seq_id": "syn_hold_easy_0015",
+        "factor": "blur",
+        "seed": 510023
+      }
+    ],
+    "holdout_hard": [
+      {
+        "seq_id": "syn_hold_hard_0001",
+        "factor": "room",
+        "seed": 530200
+      },
+      {
+        "seq_id": "syn_hold_hard_0002",
+        "factor": "room",
+        "seed": 530201
+      },
+      {
+        "seq_id": "syn_hold_hard_0003",
+        "factor": "room",
+        "seed": 530202
+      },
+      {
+        "seq_id": "syn_hold_hard_0004",
+        "factor": "room",
+        "seed": 530203
+      },
+      {
+        "seq_id": "syn_hold_hard_0005",
+        "factor": "desk",
+        "seed": 530204
+      },
+      {
+        "seq_id": "syn_hold_hard_0006",
+        "factor": "desk",
+        "seed": 530205
+      },
+      {
+        "seq_id": "syn_hold_hard_0007",
+        "factor": "desk",
+        "seed": 530206
+      },
+      {
+        "seq_id": "syn_hold_hard_0008",
+        "factor": "desk",
+        "seed": 530207
+      },
+      {
+        "seq_id": "syn_hold_hard_0009",
+        "factor": "clutter",
+        "seed": 530208
+      },
+      {
+        "seq_id": "syn_hold_hard_0010",
+        "factor": "clutter",
+        "seed": 530209
+      },
+      {
+        "seq_id": "syn_hold_hard_0011",
+        "factor": "clutter",
+        "seed": 530210
+      },
+      {
+        "seq_id": "syn_hold_hard_0012",
+        "factor": "clutter",
+        "seed": 530211
+      },
+      {
+        "seq_id": "syn_hold_hard_0013",
+        "factor": "screen",
+        "seed": 530212
+      },
+      {
+        "seq_id": "syn_hold_hard_0014",
+        "factor": "screen",
+        "seed": 530213
+      },
+      {
+        "seq_id": "syn_hold_hard_0015",
+        "factor": "screen",
+        "seed": 530214
+      },
+      {
+        "seq_id": "syn_hold_hard_0016",
+        "factor": "screen",
+        "seed": 530215
+      },
+      {
+        "seq_id": "syn_hold_hard_0017",
+        "factor": "handheld",
+        "seed": 530216
+      },
+      {
+        "seq_id": "syn_hold_hard_0018",
+        "factor": "handheld",
+        "seed": 530217
+      },
+      {
+        "seq_id": "syn_hold_hard_0019",
+        "factor": "handheld",
+        "seed": 530218
+      },
+      {
+        "seq_id": "syn_hold_hard_0020",
+        "factor": "handheld",
+        "seed": 530219
+      },
+      {
+        "seq_id": "syn_hold_hard_0021",
+        "factor": "occlude_hand",
+        "seed": 530220
+      },
+      {
+        "seq_id": "syn_hold_hard_0022",
+        "factor": "occlude_hand",
+        "seed": 530221
+      },
+      {
+        "seq_id": "syn_hold_hard_0023",
+        "factor": "occlude_hand",
+        "seed": 530222
+      },
+      {
+        "seq_id": "syn_hold_hard_0024",
+        "factor": "occlude_hand",
+        "seed": 530223
+      },
+      {
+        "seq_id": "syn_hold_hard_0025",
+        "factor": "crosscolor",
+        "seed": 530224
+      },
+      {
+        "seq_id": "syn_hold_hard_0026",
+        "factor": "crosscolor",
+        "seed": 530225
+      },
+      {
+        "seq_id": "syn_hold_hard_0027",
+        "factor": "crosscolor",
+        "seed": 530226
+      },
+      {
+        "seq_id": "syn_hold_hard_0028",
+        "factor": "crosscolor",
+        "seed": 530227
+      },
+      {
+        "seq_id": "syn_hold_hard_0029",
+        "factor": "far",
+        "seed": 530228
+      },
+      {
+        "seq_id": "syn_hold_hard_0030",
+        "factor": "far",
+        "seed": 530229
+      },
+      {
+        "seq_id": "syn_hold_hard_0031",
+        "factor": "far",
+        "seed": 530230
+      },
+      {
+        "seq_id": "syn_hold_hard_0032",
+        "factor": "far",
+        "seed": 530231
+      },
+      {
+        "seq_id": "syn_hold_hard_0033",
+        "factor": "hardmix",
+        "seed": 530232
+      },
+      {
+        "seq_id": "syn_hold_hard_0034",
+        "factor": "hardmix",
+        "seed": 530233
+      },
+      {
+        "seq_id": "syn_hold_hard_0035",
+        "factor": "hardmix",
+        "seed": 530234
+      },
+      {
+        "seq_id": "syn_hold_hard_0036",
+        "factor": "hardmix",
+        "seed": 530235
+      },
+      {
+        "seq_id": "syn_hold_hard_0037",
+        "factor": "hardmix",
+        "seed": 530236
+      },
+      {
+        "seq_id": "syn_hold_hard_0038",
+        "factor": "hardmix",
+        "seed": 530237
+      },
+      {
+        "seq_id": "syn_hold_hard_0039",
+        "factor": "hardmix",
+        "seed": 530238
+      },
+      {
+        "seq_id": "syn_hold_hard_0040",
+        "factor": "hardmix",
+        "seed": 530239
+      }
+    ]
+  },
+  "note": "fresh sequences; never used for training or checkpoint selection"
+}

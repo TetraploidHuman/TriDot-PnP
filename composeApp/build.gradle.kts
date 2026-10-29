@@ -38,7 +38,11 @@ kotlin {
             implementation(compose.materialIconsExtended)
         }
         commonTest.dependencies {
-            implementation(libs.kotlin.test)
+            implementation("org.jetbrains.kotlin:kotlin-test:2.4.20")
+        }
+        androidUnitTest.dependencies {
+            implementation("junit:junit:4.13.2")
+            implementation("org.jetbrains.kotlin:kotlin-test:2.4.20")
         }
     }
 }
@@ -51,35 +55,17 @@ android {
         applicationId = "org.example.tridotpnp"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = (findProperty("versionCode") as String?)?.toIntOrNull() ?: 1
-        versionName = (findProperty("versionName") as String?) ?: "1.0.0"
+        versionCode = 10400
+        versionName = "1.4.0"
     }
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
-    signingConfigs {
-        // Optional production keystore via env/-P. Otherwise release uses debug signing (CI-friendly).
-        val storeFilePath = System.getenv("RELEASE_STORE_FILE")
-            ?: (findProperty("RELEASE_STORE_FILE") as String?)
-        if (!storeFilePath.isNullOrBlank()) {
-            create("release") {
-                storeFile = file(storeFilePath)
-                storePassword = System.getenv("RELEASE_STORE_PASSWORD")
-                    ?: (findProperty("RELEASE_STORE_PASSWORD") as String?)
-                keyAlias = System.getenv("RELEASE_KEY_ALIAS")
-                    ?: (findProperty("RELEASE_KEY_ALIAS") as String?)
-                keyPassword = System.getenv("RELEASE_KEY_PASSWORD")
-                    ?: (findProperty("RELEASE_KEY_PASSWORD") as String?)
-            }
-        }
-    }
     buildTypes {
         getByName("release") {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.findByName("release")
-                ?: signingConfigs.getByName("debug")
         }
     }
     compileOptions {

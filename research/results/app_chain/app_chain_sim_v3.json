@@ -1,0 +1,46 @@
+{
+ "clean": {
+  "frames": 540,
+  "det10_all_visible": 0.8019,
+  "det10_observable": 0.8019,
+  "n_all_visible": 525,
+  "n_observable": 525,
+  "pose_coverage": 0.9981,
+  "trigger": 0,
+  "rescue": 0,
+  "t_err_all": {
+   "n": 539,
+   "median": 16.26,
+   "p90": 478.19,
+   "within50": 0.686
+  },
+  "t_err_clean": {
+   "n": 524,
+   "median": 16.2,
+   "p90": 458.37,
+   "within50": 0.697
+  }
+ },
+ "phone_far": {
+  "frames": 540,
+  "det10_all_visible": 0.7314,
+  "det10_observable": 0.7314,
+  "n_all_visible": 525,
+  "n_observable": 525,
+  "pose_coverage": 0.9963,
+  "trigger": 0,
+  "rescue": 0,
+  "t_err_all": {
+   "n": 538,
+   "median": 27.6,
+   "p90": 482.2,
+   "within50": 0.632
+  },
+  "t_err_clean": {
+   "n": 523,
+   "median": 27.31,
+   "p90": 438.12,
+   "within50": 0.641
+  }
+ }
+}

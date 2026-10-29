@@ -1,0 +1,82 @@
+{
+  "method": "b0",
+  "n_frames": 720,
+  "n_seqs": 8,
+  "n_all_visible_frames": 705,
+  "n_vis2_points": 2145,
+  "det": {
+    "det10_all": 0.14444444444444443,
+    "det10_all_ci95": [
+      0.05,
+      0.2222222222222222
+    ],
+    "det10_legacy": 0.1475177304964539,
+    "det10_observable": 0.1475177304964539,
+    "n_observable_frames": 705,
+    "det10_visible_partial": 0.0
+  },
+  "point": {
+    "recall@2": 0.282983682983683,
+    "recall@5": 0.30256410256410254,
+    "recall@10": 0.3076923076923077,
+    "recall@20": 0.3104895104895105,
+    "per_color_recall@10": {
+      "red": 0.4,
+      "green": 0.24583333333333332,
+      "blue": 0.2765957446808511
+    },
+    "occluded_guess@10": 0.0
+  },
+  "pose": {
+    "coverage": 0.9944444444444445,
+    "t_err_all": {
+      "n": 716,
+      "mean_mm": 490.1322077381043,
+      "median_mm": 465.99711338427585,
+      "p90_mm": 1000.0211477441931,
+      "within_50mm": 0.15921787709497207
+    },
+    "t_err_clean": {
+      "n": 702,
+      "mean_mm": 489.8871711830846,
+      "median_mm": 463.28512317021307,
+      "p90_mm": 1009.2812718533927,
+      "within_50mm": 0.1623931623931624
+    },
+    "t_err_clean_ci95_median": [
+      338.4920499061245,
+      651.7935505075047
+    ],
+    "distance_bias_mm": -443.8518574088497,
+    "jitter_mm_per_s": 3831.856490328797,
+    "recovery_frames": 6.0
+  },
+  "latency": {
+    "median_ms": 35.92409851262346,
+    "p90_ms": 89.80885246419348,
+    "fps_est": 27.836467480140314
+  },
+  "by_factor": {
+    "clutter": {
+      "n_frames": 360,
+      "det10_all": 0.075,
+      "det10_legacy": 0.075,
+      "det10_observable": 0.075,
+      "point_recall@10": 0.25925925925925924,
+      "pose_coverage": 0.9916666666666667,
+      "t_err_median_mm": 446.7968265537503
+    },
+    "crosscolor": {
+      "n_frames": 360,
+      "det10_all": 0.21388888888888888,
+      "det10_legacy": 0.22318840579710145,
+      "det10_observable": 0.22318840579710145,
+      "point_recall@10": 0.3568075117370892,
+      "pose_coverage": 0.9972222222222222,
+      "t_err_median_mm": 520.5852667714485
+    }
+  },
+  "completion": {
+    "n_frames": 0
+  }
+}

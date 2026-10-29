@@ -1,57 +1,21 @@
 package org.example.tridotpnp
 
 import android.annotation.SuppressLint
-import android.graphics.Color
-import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
-import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.core.view.WindowCompat
-import org.example.tridotpnp.camera.ShutterKeyController
-import org.example.tridotpnp.camera.ShutterKeyEvent
-import org.example.tridotpnp.camera.VolumeKeyZoomController
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Camera preview is edge-to-edge. Android's default 3-button nav contrast scrim
-        // paints a thin light/dark strip that flips with preview brightness and sits
-        // right next to our zoom indicator — disable it explicitly and keep it off.
-        enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
-            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT)
-        )
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-        disableSystemBarContrastScrim()
 
         setContent {
-            // enableEdgeToEdge() defaults contrast enforcement back on; clear again
-            // after composition attaches / recomposes.
-            SideEffect { disableSystemBarContrastScrim() }
             App()
-        }
-    }
-
-    override fun onResume() {
-        super.onResume()
-        disableSystemBarContrastScrim()
-    }
-
-    private fun disableSystemBarContrastScrim() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            window.isNavigationBarContrastEnforced = false
-            window.isStatusBarContrastEnforced = false
-        }
-        @Suppress("DEPRECATION")
-        run {
-            window.statusBarColor = Color.TRANSPARENT
-            window.navigationBarColor = Color.TRANSPARENT
         }
     }
 

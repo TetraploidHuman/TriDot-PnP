@@ -1,0 +1,73 @@
+{
+  "method": "b0",
+  "n_frames": 720,
+  "n_seqs": 8,
+  "n_all_visible_frames": 162,
+  "n_vis2_points": 1403,
+  "det": {
+    "det10_all": 0.0,
+    "det10_all_ci95": [
+      0.0,
+      0.0
+    ],
+    "det10_legacy": 0.0,
+    "det10_observable": 0.0,
+    "n_observable_frames": 660,
+    "det10_visible_partial": 0.0
+  },
+  "point": {
+    "recall@2": 0.020669992872416252,
+    "recall@5": 0.03278688524590164,
+    "recall@10": 0.03492516037063435,
+    "recall@20": 0.03848895224518888,
+    "per_color_recall@10": {
+      "red": 0.03225806451612903,
+      "green": 0.050445103857566766,
+      "blue": 0.027559055118110236
+    },
+    "occluded_guess@10": 0.0013227513227513227
+  },
+  "pose": {
+    "coverage": 0.9986111111111111,
+    "t_err_all": {
+      "n": 719,
+      "mean_mm": 648.3592407398841,
+      "median_mm": 675.3881176927205,
+      "p90_mm": 929.924466916452,
+      "within_50mm": 0.0013908205841446453
+    },
+    "t_err_clean": {
+      "n": 162,
+      "mean_mm": 572.4015861475168,
+      "median_mm": 602.3628353398456,
+      "p90_mm": 834.6418921016857,
+      "within_50mm": 0.006172839506172839
+    },
+    "t_err_clean_ci95_median": [
+      442.6665060791716,
+      762.4480462943957
+    ],
+    "distance_bias_mm": -655.6529545390748,
+    "jitter_mm_per_s": 3796.719530436137,
+    "recovery_frames": 16.0
+  },
+  "latency": {
+    "median_ms": 61.56612149788998,
+    "p90_ms": 125.01785877975635,
+    "fps_est": 16.242699323430216
+  },
+  "by_factor": {
+    "hardmix": {
+      "n_frames": 720,
+      "det10_all": 0.0,
+      "det10_legacy": 0.0,
+      "det10_observable": 0.0,
+      "point_recall@10": 0.03492516037063435,
+      "pose_coverage": 0.9986111111111111,
+      "t_err_median_mm": 602.3628353398456
+    }
+  },
+  "completion": {
+    "n_frames": 0
+  }
+}

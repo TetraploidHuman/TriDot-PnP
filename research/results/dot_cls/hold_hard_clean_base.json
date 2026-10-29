@@ -1,0 +1,89 @@
+{
+  "subset": "holdout_hard",
+  "degrade": null,
+  "n_sequences": 12,
+  "methods": {
+    "classic2": {
+      "label": "classic2",
+      "n_frames": 1080,
+      "det10_all": 0.725,
+      "buckets": {
+        "0-20": {
+          "n": 16,
+          "det10_all": 0.0,
+          "t_err_med": null
+        },
+        "20-40": {
+          "n": 0,
+          "det10_all": null,
+          "t_err_med": null
+        },
+        "40-80": {
+          "n": 128,
+          "det10_all": 0.4765625,
+          "t_err_med": 11.935463390195922
+        },
+        "80+": {
+          "n": 936,
+          "det10_all": 0.7713675213675214,
+          "t_err_med": 7.397249050007579
+        }
+      },
+      "factors": {
+        "clutter": {
+          "n": 360,
+          "det10_all": 0.5666666666666667
+        },
+        "desk": {
+          "n": 360,
+          "det10_all": 0.7083333333333334
+        },
+        "room": {
+          "n": 360,
+          "det10_all": 0.9
+        }
+      }
+    },
+    "classic3_union": {
+      "label": "classic3_union",
+      "n_frames": 1080,
+      "det10_all": 0.7583333333333333,
+      "buckets": {
+        "0-20": {
+          "n": 16,
+          "det10_all": 0.0,
+          "t_err_med": null
+        },
+        "20-40": {
+          "n": 0,
+          "det10_all": null,
+          "t_err_med": null
+        },
+        "40-80": {
+          "n": 128,
+          "det10_all": 0.609375,
+          "t_err_med": 10.079984109297655
+        },
+        "80+": {
+          "n": 936,
+          "det10_all": 0.7916666666666666,
+          "t_err_med": 11.471433293802729
+        }
+      },
+      "factors": {
+        "clutter": {
+          "n": 360,
+          "det10_all": 0.6555555555555556
+        },
+        "desk": {
+          "n": 360,
+          "det10_all": 0.8777777777777778
+        },
+        "room": {
+          "n": 360,
+          "det10_all": 0.7416666666666667
+        }
+      }
+    }
+  }
+}

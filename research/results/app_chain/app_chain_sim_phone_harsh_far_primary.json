@@ -1,0 +1,24 @@
+{
+ "phone_harsh": {
+  "frames": 540,
+  "det10_all_visible": 0.52,
+  "det10_observable": 0.52,
+  "n_all_visible": 525,
+  "n_observable": 525,
+  "pose_coverage": 0.8111,
+  "trigger": 540,
+  "rescue": 228,
+  "t_err_all": {
+   "n": 438,
+   "median": 31.34,
+   "p90": 842.13,
+   "within50": 0.612
+  },
+  "t_err_clean": {
+   "n": 433,
+   "median": 32.13,
+   "p90": 854.05,
+   "within50": 0.607
+  }
+ }
+}

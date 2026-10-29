@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TriDot 真实视频标注</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>TriDot 真实视频标注</h1>
+  <div class="session-bar">
+    <select id="videoSelect" title="选择视频"></select>
+    <label class="muted">抽帧步长
+      <input id="strideInput" type="number" min="1" max="120" value="10">
+    </label>
+    <button id="newSessionBtn" class="primary">新建会话</button>
+    <button id="uploadBtn" class="ghost">上传视频…</button>
+    <input id="uploadInput" type="file" accept="video/mp4" hidden>
+  </div>
+  <div class="status-bar">
+    <span id="sessionInfo" class="muted">未创建会话</span>
+    <span class="spacer"></span>
+    <span id="counts" class="counts"></span>
+    <button id="exportBtn" class="export">导出标注</button>
+  </div>
+</header>
+
+<main>
+  <aside id="frameList" aria-label="帧列表"></aside>
+
+  <section id="stage">
+    <div id="stageInner">
+      <canvas id="canvas" width="1280" height="720"></canvas>
+      <div id="placeholder">选择视频并新建会话</div>
+    </div>
+    <div id="hint" class="muted">拖动画布内圆点可微调，点击空白处放置下一个颜色点</div>
+  </section>
+
+  <aside id="controls">
+    <div class="group">
+      <div class="group-title">当前帧</div>
+      <div class="frame-nav">
+        <button id="prevBtn" title="上一帧 (←)">←</button>
+        <span id="frameLabel">-</span>
+        <button id="nextBtn" title="下一帧 (→)">→</button>
+      </div>
+      <div class="legend">
+        <span class="dot red"></span><span>red</span>
+        <span class="dot green"></span><span>green</span>
+        <span class="dot blue"></span><span>blue</span>
+      </div>
+      <div class="toolbar">
+        <button id="acceptBtn" class="ok">接受 (A)</button>
+        <button id="rejectBtn" class="bad">拒绝 (R)</button>
+      </div>
+      <div class="muted small" id="frameStatus"></div>
+    </div>
+
+    <div class="group">
+      <div class="group-title">编辑</div>
+      <div class="muted small">点色按钮锁定该颜色，否则自动轮转到下一个缺失颜色；拖动圆点微调；坐标已吸附到原图像素。</div>
+      <div class="toolbar color-row">
+        <button data-color="red">R</button>
+        <button data-color="green">G</button>
+        <button data-color="blue">B</button>
+      </div>
+      <div id="pointInfo" class="mono small"></div>
+    </div>
+
+    <div class="group">
+      <div class="group-title">说明</div>
+      <ul class="help small">
+        <li>服务端对每个抽帧默认跑 B0 自动检测，<b>接受</b>即采用检测点；点错时手动改三点后接受。</li>
+        <li>若某帧看不全三点，用<b>拒绝</b>；拒绝帧不计入导出。</li>
+        <li>导出会写入 <code>datasets/TriDotPose/real/annotations/</code>，并把视频复制到 <code>synthetic/videos/</code> 加入 real_train 划分。</li>
+        <li>会话只存在服务端内存，重启前请先导出。</li>
+      </ul>
+    </div>
+  </aside>
+</main>
+
+<div id="toast" class="toast" hidden></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

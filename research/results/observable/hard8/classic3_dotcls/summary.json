@@ -1,0 +1,82 @@
+{
+  "method": "classic3_dotcls",
+  "n_frames": 720,
+  "n_seqs": 8,
+  "n_all_visible_frames": 705,
+  "n_vis2_points": 2145,
+  "det": {
+    "det10_all": 0.8486111111111111,
+    "det10_all_ci95": [
+      0.8055555555555556,
+      0.8977777777777778
+    ],
+    "det10_legacy": 0.8666666666666667,
+    "det10_observable": 0.8666666666666667,
+    "n_observable_frames": 705,
+    "det10_visible_partial": 0.0
+  },
+  "point": {
+    "recall@2": 0.7351981351981351,
+    "recall@5": 0.8624708624708625,
+    "recall@10": 0.9263403263403264,
+    "recall@20": 0.9384615384615385,
+    "per_color_recall@10": {
+      "red": 0.9138888888888889,
+      "green": 0.9388888888888889,
+      "blue": 0.926241134751773
+    },
+    "occluded_guess@10": 0.0
+  },
+  "pose": {
+    "coverage": 1.0,
+    "t_err_all": {
+      "n": 720,
+      "mean_mm": 65.96928222671521,
+      "median_mm": 8.794825954874696,
+      "p90_mm": 121.5287362876394,
+      "within_50mm": 0.85
+    },
+    "t_err_clean": {
+      "n": 705,
+      "mean_mm": 55.77933026071144,
+      "median_mm": 8.338465895602011,
+      "p90_mm": 68.23661334768646,
+      "within_50mm": 0.8680851063829788
+    },
+    "t_err_clean_ci95_median": [
+      7.323035132551314,
+      10.478926332744102
+    ],
+    "distance_bias_mm": -0.05318596459090941,
+    "jitter_mm_per_s": 703.3828895772903,
+    "recovery_frames": 4.0
+  },
+  "latency": {
+    "median_ms": 84.24812098382972,
+    "p90_ms": 100.23652387899348,
+    "fps_est": 11.86970093008883
+  },
+  "by_factor": {
+    "clutter": {
+      "n_frames": 360,
+      "det10_all": 0.8583333333333333,
+      "det10_legacy": 0.8583333333333333,
+      "det10_observable": 0.8583333333333333,
+      "point_recall@10": 0.9185185185185185,
+      "pose_coverage": 1.0,
+      "t_err_median_mm": 8.369014676012313
+    },
+    "crosscolor": {
+      "n_frames": 360,
+      "det10_all": 0.8388888888888889,
+      "det10_legacy": 0.8753623188405797,
+      "det10_observable": 0.8753623188405797,
+      "point_recall@10": 0.9342723004694836,
+      "pose_coverage": 1.0,
+      "t_err_median_mm": 8.289235065411473
+    }
+  },
+  "completion": {
+    "n_frames": 0
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "TriDot-Pose-1.0",
+  "version": "1.0",
+  "preset": "realistic_train_tail",
+  "created_utc": "2026-10-12T16:45:29Z",
+  "num_synthetic_sequences": 66,
+  "default_resolution": [
+    1280,
+    720
+  ],
+  "default_edge_length_mm": 100.0,
+  "keypoints": [
+    "red",
+    "green",
+    "blue"
+  ],
+  "last_preset": "realistic_train_tail",
+  "num_realistic_sequences": 40
+}

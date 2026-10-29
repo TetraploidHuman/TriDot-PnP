@@ -1,0 +1,24 @@
+{
+ "phone_far": {
+  "frames": 540,
+  "det10_all_visible": 0.4971,
+  "det10_observable": 0.4971,
+  "n_all_visible": 525,
+  "n_observable": 525,
+  "pose_coverage": 0.9759,
+  "trigger": 372,
+  "rescue": 99,
+  "t_err_all": {
+   "n": 527,
+   "median": 49.01,
+   "p90": 869.6,
+   "within50": 0.503
+  },
+  "t_err_clean": {
+   "n": 515,
+   "median": 47.37,
+   "p90": 873.62,
+   "within50": 0.505
+  }
+ }
+}
